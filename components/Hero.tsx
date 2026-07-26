@@ -1,3 +1,5 @@
+import Link from "next/link";
+import Button from "@/components/ui/Button";
 export default function Hero() {
   return (
     <section className="flex flex-col items-center justify-center text-center px-6 mt-32">
@@ -19,13 +21,15 @@ export default function Hero() {
       </p>
 
       <div className="mt-10 flex gap-6">
-        <button className="rounded-xl bg-blue-600 px-8 py-4 text-lg font-semibold transition hover:scale-105 hover:bg-blue-700">
-          Get Started
-        </button>
+      <Link href="/register">
+  <Button>Get Started</Button>
+</Link>
 
-        <button className="rounded-xl border border-white px-8 py-4 text-lg transition hover:bg-white hover:text-black">
-          Learn More
-        </button>
+<Link href="/login">
+  <Button variant="secondary">
+    Learn More
+  </Button>
+</Link>
       </div>
     </section>
   );
