@@ -24,7 +24,7 @@ type ChatClientProps = {
 
 export default function ChatClient({ user }: ChatClientProps) {
   const [hydrated, setHydrated] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const activeConversation = conversations.find((c) => c.id === activeId) ?? null;
@@ -164,9 +164,16 @@ export default function ChatClient({ user }: ChatClientProps) {
         onSelect={(id) => {
           setActiveId(id);
           setInput("");
+          setSidebarOpen(false);
         }}
         onNew={newConversation}
         onDelete={deleteConversation}
+        onRename={(id, title) => {
+          setConversations((prev) =>
+            prev.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c))
+          );
+        }}
+        onToggle={() => setSidebarOpen((prev) => !prev)}
         onClose={() => setSidebarOpen(false)}
       />
 

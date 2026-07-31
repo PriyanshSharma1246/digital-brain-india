@@ -1,15 +1,18 @@
 import type { ChatMessage, ChatRole, Conversation } from "@/app/types/chat";
 
 /**
- * Small localStorage helper for the chat sidebar history.
- *
- * NOTE: the existing /api/chat route already persists every message/reply
- * pair to Postgres via Prisma, but there is no GET endpoint to read them
- * back. To avoid touching the API or the Prisma schema, the sidebar history
- * is kept in the browser only.
+ * Local storage helper for the chat sidebar history.
  */
 
 const STORAGE_KEY = "dbi:chat:conversations";
+const METADATA_KEY = "dbi:chat:conversation-metadata";
+
+export type ConversationMetadata = Record<
+  string,
+  {
+    title: string;
+  }
+>;
 
 /** Safe id generator (works in browsers without crypto.randomUUID). */
 export function createId(): string {
@@ -35,11 +38,63 @@ export function createMessage(
 
 export function createConversation(title = "New chat"): Conversation {
   return {
-    id: createId(),
+    id: `local:${createId()}`,
     title,
     messages: [],
     updatedAt: Date.now(),
   };
+}
+
+export function loadConversationMetadata(): ConversationMetadata {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(METADATA_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    return parsed as ConversationMetadata;
+  } catch {
+    return {};
+  }
+}
+
+export function saveConversationMetadata(metadata: ConversationMetadata): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(METADATA_KEY, JSON.stringify(metadata));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export function applyConversationMetadata(
+  conversations: Conversation[],
+  metadata: ConversationMetadata
+): Conversation[] {
+  return conversations.map((conversation) => {
+    const override = metadata[conversation.id];
+    if (!override) return conversation;
+    return { ...conversation, title: override.title };
+  });
+}
+
+export function setConversationTitle(id: string, title: string): void {
+  const metadata = loadConversationMetadata();
+  saveConversationMetadata({
+    ...metadata,
+    [id]: { title },
+  });
+}
+
+export function deleteConversationMetadata(id: string): void {
+  const metadata = loadConversationMetadata();
+  if (!(id in metadata)) return;
+  const next = { ...metadata };
+  delete next[id];
+  saveConversationMetadata(next);
 }
 
 /** Turns the first user message into a short sidebar title. */
