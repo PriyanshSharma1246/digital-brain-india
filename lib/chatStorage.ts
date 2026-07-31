@@ -1,18 +1,8 @@
 import type { ChatMessage, ChatRole, Conversation } from "@/app/types/chat";
 
 /**
- * Local storage helper for the chat sidebar history.
+ * Helper functions for client-side chat messages and conversation IDs.
  */
-
-const STORAGE_KEY = "dbi:chat:conversations";
-const METADATA_KEY = "dbi:chat:conversation-metadata";
-
-export type ConversationMetadata = Record<
-  string,
-  {
-    title: string;
-  }
->;
 
 /** Safe id generator (works in browsers without crypto.randomUUID). */
 export function createId(): string {
@@ -38,63 +28,47 @@ export function createMessage(
 
 export function createConversation(title = "New chat"): Conversation {
   return {
-    id: `local:${createId()}`,
+    id: `conv:${createId()}`,
     title,
     messages: [],
     updatedAt: Date.now(),
+    isLocal: true,
   };
 }
 
-export function loadConversationMetadata(): ConversationMetadata {
-  if (typeof window === "undefined") return {};
+export type StoredMessage = {
+  conversationId?: string;
+  text: string;
+  title?: string;
+};
 
+export function serializeStoredMessage(
+  text: string,
+  conversationId?: string,
+  title?: string
+): string {
+  if (!conversationId && !title) return text;
+  return JSON.stringify({ conversationId, text, title });
+}
+
+export function parseStoredMessage(raw: string): StoredMessage {
   try {
-    const raw = window.localStorage.getItem(METADATA_KEY);
-    if (!raw) return {};
-
     const parsed = JSON.parse(raw);
-    if (typeof parsed !== "object" || parsed === null) return {};
-    return parsed as ConversationMetadata;
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as any).text === "string"
+    ) {
+      return {
+        conversationId: typeof (parsed as any).conversationId === "string" ? (parsed as any).conversationId : undefined,
+        text: (parsed as any).text,
+        title: typeof (parsed as any).title === "string" ? (parsed as any).title : undefined,
+      };
+    }
   } catch {
-    return {};
+    // Fallback to plain text content.
   }
-}
-
-export function saveConversationMetadata(metadata: ConversationMetadata): void {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(METADATA_KEY, JSON.stringify(metadata));
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
-export function applyConversationMetadata(
-  conversations: Conversation[],
-  metadata: ConversationMetadata
-): Conversation[] {
-  return conversations.map((conversation) => {
-    const override = metadata[conversation.id];
-    if (!override) return conversation;
-    return { ...conversation, title: override.title };
-  });
-}
-
-export function setConversationTitle(id: string, title: string): void {
-  const metadata = loadConversationMetadata();
-  saveConversationMetadata({
-    ...metadata,
-    [id]: { title },
-  });
-}
-
-export function deleteConversationMetadata(id: string): void {
-  const metadata = loadConversationMetadata();
-  if (!(id in metadata)) return;
-  const next = { ...metadata };
-  delete next[id];
-  saveConversationMetadata(next);
+  return { text: raw };
 }
 
 /** Turns the first user message into a short sidebar title. */
@@ -116,29 +90,9 @@ function isConversation(value: unknown): value is Conversation {
 }
 
 export function loadConversations(): Conversation[] {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .filter(isConversation)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-  } catch {
-    return [];
-  }
+  return [];
 }
 
-export function saveConversations(conversations: Conversation[]): void {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-  } catch {
-    // Storage full / disabled – history simply won't persist.
-  }
+export function saveConversations(_conversations: Conversation[]): void {
+  return;
 }

@@ -116,7 +116,7 @@ export default function ChatSidebar({
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
               Conversations
             </h2>
-            <p className="text-xs text-slate-500">Saved locally in browser storage</p>
+            <p className="text-xs text-slate-500">Saved in your account</p>
           </div>
 
           <button

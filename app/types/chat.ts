@@ -22,6 +22,12 @@ export type Conversation = {
   messages: ChatMessage[];
   /** epoch ms of the last activity – used to sort the sidebar */
   updatedAt: number;
+  /** true for a locally-created conversation that has not yet been persisted */
+  isLocal?: boolean;
+};
+
+export type ConversationResponse = {
+  conversations: Conversation[];
 };
 
 /** Response body of POST /api/chat */
@@ -29,5 +35,6 @@ export type ChatApiResponse = {
   success: boolean;
   reply?: string;
   chatId?: string;
+  conversationId?: string;
   error?: string;
 };

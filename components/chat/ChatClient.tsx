@@ -1,15 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { ChatMessage, ChatApiResponse } from "@/app/types/chat";
-import {
-  loadConversations,
-  saveConversations,
-  createConversation,
-  createMessage,
-  deriveTitle,
-} from "@/lib/chatStorage";
-import type { Conversation } from "@/app/types/chat";
+import type { ChatMessage, Conversation, ConversationResponse } from "@/app/types/chat";
+import { createConversation, createMessage, createId, deriveTitle } from "@/lib/chatStorage";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
@@ -31,26 +24,39 @@ export default function ChatClient({ user }: ChatClientProps) {
   const messages = activeConversation?.messages ?? [];
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [assistantMessageId, setAssistantMessageId] = useState<string | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
 
   useEffect(() => {
-    const saved = loadConversations();
-    setConversations(saved);
-
-    if (saved.length > 0) {
-      setActiveId(saved[0].id);
-    } else {
-      const fresh = createConversation();
-      setConversations([fresh]);
-      setActiveId(fresh.id);
+    async function loadHistory() {
+      setIsRefreshing(true);
+      try {
+        const res = await fetch("/api/chat/history");
+        const data: ConversationResponse = await res.json();
+        if (data.conversations?.length) {
+          setConversations(data.conversations);
+          setActiveId(data.conversations[0]?.id ?? null);
+        } else {
+          const fresh = createConversation();
+          setConversations([fresh]);
+          setActiveId(fresh.id);
+        }
+      } catch {
+        const fresh = createConversation();
+        setConversations([fresh]);
+        setActiveId(fresh.id);
+      } finally {
+        setHydrated(true);
+        setIsRefreshing(false);
+      }
     }
 
-    setHydrated(true);
+    loadHistory();
   }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    saveConversations(conversations);
-  }, [conversations, hydrated]);
 
   const updateMessages = useCallback(
     (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
@@ -69,6 +75,20 @@ export default function ChatClient({ user }: ChatClientProps) {
     [activeId]
   );
 
+  const updateAssistantMessage = useCallback(
+    (message: string, isError = false) => {
+      if (!assistantMessageId) return;
+      updateMessages((prev) =>
+        prev.map((messageItem) =>
+          messageItem.id === assistantMessageId
+            ? { ...messageItem, message, isError }
+            : messageItem
+        )
+      );
+    },
+    [assistantMessageId, updateMessages]
+  );
+
   function newConversation() {
     const fresh = createConversation();
     setConversations((prev) => [fresh, ...prev]);
@@ -77,7 +97,17 @@ export default function ChatClient({ user }: ChatClientProps) {
     setSidebarOpen(false);
   }
 
-  function deleteConversation(id: string) {
+  async function deleteConversation(id: string) {
+    try {
+      await fetch("/api/chat/conversation/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: id }),
+      });
+    } catch {
+      // Allow local deletion even if server request fails.
+    }
+
     setConversations((prev) => {
       const next = prev.filter((c) => c.id !== id);
       if (activeId === id) {
@@ -94,7 +124,7 @@ export default function ChatClient({ user }: ChatClientProps) {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || isUploading) return;
 
     let currentId = activeId;
     let currentConversation = activeConversation;
@@ -107,44 +137,208 @@ export default function ChatClient({ user }: ChatClientProps) {
       currentConversation = fresh;
     }
 
-    if (currentConversation.title === "New chat" && currentConversation.messages.length === 0) {
+    const title =
+      currentConversation.title === "New chat" && currentConversation.messages.length === 0
+        ? deriveTitle(text)
+        : currentConversation.title;
+
+    if (
+      currentConversation.title === "New chat" &&
+      currentConversation.messages.length === 0
+    ) {
       setConversations((prev) =>
-        prev.map((c) =>
-          c.id === currentId ? { ...c, title: deriveTitle(text) } : c
-        )
+        prev.map((c) => (c.id === currentId ? { ...c, title } : c))
       );
     }
 
     const userMsg = createMessage("user", text);
-    updateMessages((prev) => [...prev, userMsg]);
+    const assistantId = createId();
+    const assistantMsg: ChatMessage = {
+      ...createMessage("assistant", ""),
+      id: assistantId,
+    };
+
+    updateMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setAssistantMessageId(assistantId);
     setInput("");
     setIsLoading(true);
 
+    const controller = new AbortController();
+    setAbortController(controller);
+
     try {
-      const res = await fetch("/api/chat", {
+      const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({
+          message: text,
+          conversationId: currentId,
+          conversationTitle: title,
+        }),
+        signal: controller.signal,
       });
 
-      const data: ChatApiResponse = await res.json();
-
-      if (data.success && data.reply) {
-        updateMessages((prev) => [...prev, createMessage("assistant", data.reply ?? "No response from Gemini.")]);
-      } else {
-        updateMessages((prev) => [
-          ...prev,
-          createMessage("assistant", data.error ?? "No response from Gemini.", true),
-        ]);
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => null);
+        const errorMessage =
+          errorPayload?.error ||
+          "Failed to stream AI response. Please try again.";
+        updateAssistantMessage(errorMessage, true);
+        return;
       }
-    } catch {
-      updateMessages((prev) => [
-        ...prev,
-        createMessage("assistant", "❌ Failed to contact AI. Please check your connection and try again.", true),
-      ]);
+
+      if (!response.body) {
+        updateAssistantMessage(
+          "AI stream unavailable. Please try again.",
+          true
+        );
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let partial = "";
+      let finished = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex = buffer.indexOf("\n");
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          newlineIndex = buffer.indexOf("\n");
+
+          if (!line) continue;
+
+          try {
+            const payload = JSON.parse(line);
+            if (payload.type === "chunk" && typeof payload.text === "string") {
+              partial += payload.text;
+              updateAssistantMessage(partial);
+            }
+
+            if (payload.type === "done" && typeof payload.reply === "string") {
+              finished = true;
+              updateAssistantMessage(payload.reply);
+            }
+
+            if (payload.type === "error" && typeof payload.error === "string") {
+              updateAssistantMessage(payload.error, true);
+            }
+          } catch {
+            // Ignore invalid partial lines.
+          }
+        }
+      }
+
+      if (!finished && partial) {
+        updateAssistantMessage(partial);
+      }
+    } catch (error: unknown) {
+      const isAbort =
+        typeof error === "object" &&
+        error !== null &&
+        "name" in error &&
+        (error as { name?: string }).name === "AbortError";
+
+      if (!isAbort) {
+        updateAssistantMessage(
+          "❌ Failed to contact AI. Please check your connection and try again.",
+          true
+        );
+      }
     } finally {
       setIsLoading(false);
+      setAbortController(null);
+      setAssistantMessageId(null);
     }
+  }
+
+  async function handleFileAttach(file: File) {
+    if (isUploading || isLoading) return;
+
+    let currentId = activeId;
+    let currentConversation = activeConversation;
+
+    if (!currentConversation) {
+      const fresh = createConversation();
+      setConversations((prev) => [fresh, ...prev]);
+      setActiveId(fresh.id);
+      currentId = fresh.id;
+      currentConversation = fresh;
+    }
+
+    const title =
+      currentConversation.title === "New chat" && currentConversation.messages.length === 0
+        ? deriveTitle(`Uploaded file: ${file.name}`)
+        : currentConversation.title;
+
+    if (
+      currentConversation.title === "New chat" &&
+      currentConversation.messages.length === 0
+    ) {
+      setConversations((prev) =>
+        prev.map((c) => (c.id === currentId ? { ...c, title } : c))
+      );
+    }
+
+    const userMsg = createMessage("user", `Uploaded file: ${file.name}`);
+    const assistantId = createId();
+    const assistantMsg: ChatMessage = {
+      ...createMessage("assistant", ""),
+      id: assistantId,
+    };
+
+    updateMessages((prev) => [...prev, userMsg, assistantMsg]);
+    setAssistantMessageId(assistantId);
+    setIsUploading(true);
+    setUploadingFileName(file.name);
+    setUploadStatus("Uploading file...");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("conversationId", currentId ?? "");
+
+      const response = await fetch("/api/chat/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        const errorMessage =
+          result?.error || "Failed to upload file. Please try again.";
+        setUploadStatus(errorMessage);
+        updateAssistantMessage(errorMessage, true);
+        return;
+      }
+
+      const successMessage =
+        result.message || `Uploaded and processed ${file.name}.`;
+      setUploadStatus(successMessage);
+      updateAssistantMessage(successMessage);
+    } catch (error) {
+      const message = "Failed to upload file. Please check your connection.";
+      setUploadStatus(message);
+      updateAssistantMessage(message, true);
+    } finally {
+      setIsUploading(false);
+      setUploadingFileName(null);
+      setTimeout(() => setUploadStatus(null), 5000);
+      setAssistantMessageId(null);
+    }
+  }
+
+  function stopGenerating() {
+    abortController?.abort();
+    setAbortController(null);
+    setIsLoading(false);
   }
 
   if (!hydrated) {
@@ -168,7 +362,16 @@ export default function ChatClient({ user }: ChatClientProps) {
         }}
         onNew={newConversation}
         onDelete={deleteConversation}
-        onRename={(id, title) => {
+        onRename={async (id, title) => {
+          try {
+            await fetch("/api/chat/conversation/rename", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ conversationId: id, title }),
+            });
+          } catch {
+            // Ignore failures and still update locally.
+          }
           setConversations((prev) =>
             prev.map((c) => (c.id === id ? { ...c, title, updatedAt: Date.now() } : c))
           );
@@ -229,7 +432,13 @@ export default function ChatClient({ user }: ChatClientProps) {
               value={input}
               onChange={setInput}
               onSend={sendMessage}
+              onStop={stopGenerating}
+              onAttach={handleFileAttach}
               isLoading={isLoading}
+              isUploading={isUploading}
+              uploadingFileName={uploadingFileName ?? undefined}
+              uploadStatus={uploadStatus ?? undefined}
+              disabled={isUploading}
             />
             <p className="mt-2 text-center text-[11px] text-slate-600">
               AI responses are generated by Google Gemini. Verify critical
