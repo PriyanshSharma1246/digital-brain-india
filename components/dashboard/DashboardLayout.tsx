@@ -1,12 +1,11 @@
-import { ReactNode } from "react";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
 
-type Props = {
-  children: ReactNode;
-};
-
-export default function DashboardLayout({ children }: Props) {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex min-h-screen bg-slate-950 text-white">
       <Sidebar />
@@ -14,9 +13,7 @@ export default function DashboardLayout({ children }: Props) {
       <div className="flex-1">
         <Topbar />
 
-        <main className="p-8">
-          {children}
-        </main>
+        <main className="p-8">{children}</main>
       </div>
     </div>
   );
