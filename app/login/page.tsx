@@ -1,35 +1,114 @@
+﻿"use client";
+
+import { useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
+import { Globe } from "lucide-react";
+
 export default function LoginPage() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const router = useRouter();
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(null);
+    setIsLoading(true);
+
+    const result = await signIn("credentials", {
+      redirect: false,
+      email,
+      password,
+      callbackUrl: "/chat",
+    });
+
+    setIsLoading(false);
+
+    if (result?.error) {
+      setError("Invalid email or password.");
+      return;
+    }
+
+    router.push("/chat");
+  }
+
   return (
-    <main className="min-h-screen flex items-center justify-center bg-slate-950 text-white">
-      <div className="w-full max-w-md rounded-2xl bg-slate-900 p-8 shadow-xl">
-        <h1 className="text-3xl font-bold text-center">
-          Welcome Back
-        </h1>
+    <main className="min-h-screen bg-slate-950 text-white">
+      <div className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-4 py-12 sm:px-6">
+        <div className="rounded-3xl border border-white/10 bg-slate-900 p-8 shadow-2xl sm:p-10">
+          <div className="mb-8 text-center">
+            <p className="text-sm uppercase tracking-[0.3em] text-blue-300">Welcome back</p>
+            <h1 className="mt-4 text-4xl font-semibold text-white">Sign in to India Digital Brain</h1>
+            <p className="mt-2 text-sm text-slate-400">
+              Access your Gemini chat history, profile, and assistant.
+            </p>
+          </div>
 
-        <p className="mt-2 text-center text-gray-400">
-          Sign in to India Digital Brain
-        </p>
+          <div className="space-y-4">
+            <button
+              type="button"
+              onClick={() => signIn("google", { callbackUrl: "/chat" })}
+              className="flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-700 bg-slate-800 px-5 py-3 text-sm font-semibold text-white transition hover:border-blue-500 hover:text-blue-200"
+            >
+              <Globe className="h-5 w-5" />
+              Continue with Google
+            </button>
 
-        <form className="mt-8 space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            className="w-full rounded-lg bg-slate-800 p-3 outline-none focus:ring-2 focus:ring-blue-500"
-          />
+            <div className="relative py-3 text-center text-sm text-slate-500">
+              <span className="bg-slate-900 px-3">or continue with</span>
+            </div>
 
-          <input
-            type="password"
-            placeholder="Password"
-            className="w-full rounded-lg bg-slate-800 p-3 outline-none focus:ring-2 focus:ring-blue-500"
-          />
+            <form className="space-y-4" onSubmit={handleSubmit}>
+              <label className="block text-sm font-medium text-slate-300">
+                Email
+                <input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  type="email"
+                  placeholder="you@example.com"
+                  className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  required
+                />
+              </label>
 
-          <button
-            type="submit"
-            className="w-full rounded-lg bg-blue-600 p-3 font-semibold hover:bg-blue-700"
-          >
-            Login
-          </button>
-        </form>
+              <label className="block text-sm font-medium text-slate-300">
+                Password
+                <input
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  type="password"
+                  placeholder="Enter your password"
+                  className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950/70 px-4 py-3 text-sm text-slate-100 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                  required
+                />
+              </label>
+
+              {error ? (
+                <p className="rounded-2xl bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {error}
+                </p>
+              ) : null}
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full rounded-2xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isLoading ? "Signing in…" : "Sign In"}
+              </button>
+            </form>
+          </div>
+
+          <p className="mt-6 text-center text-sm text-slate-500">
+            Don’t have an account?{' '}
+            <Link href="/register" className="font-semibold text-white hover:text-blue-300">
+              Create one
+            </Link>
+          </p>
+        </div>
       </div>
     </main>
   );

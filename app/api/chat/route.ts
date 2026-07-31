@@ -1,17 +1,23 @@
-import { NextResponse } from "next/server";
+﻿import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
 import { GoogleGenAI } from "@google/genai";
 import { prisma } from "@/lib/prisma";
+import { authOptions } from "@/lib/auth";
 
-// Initialize the Gemini client once (API key from .env.local)
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY ?? "",
 });
 
-// The test user ID used to persist chats (from .env.local)
-const TEST_USER_ID = process.env.TEST_USER_ID ?? "";
-
 export async function POST(req: Request) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized" },
+        { status: 401 }
+      );
+    }
+
     const { message } = await req.json();
 
     if (!message || typeof message !== "string") {
@@ -21,15 +27,6 @@ export async function POST(req: Request) {
       );
     }
 
-    if (!TEST_USER_ID) {
-      return NextResponse.json(
-        { success: false, error: "TEST_USER_ID is not configured" },
-        { status: 500 }
-      );
-    }
-
-    // Send the user's message to Gemini 2.0 Flash
-    // Falls back to gemini-1.5-flash if 2.0 quota is exhausted
     let response;
     try {
       response = await ai.models.generateContent({
@@ -46,12 +43,11 @@ export async function POST(req: Request) {
 
     const reply = response.text ?? "No response from Gemini.";
 
-    // Save the user message and AI reply to the Chat table
     const chat = await prisma.chat.create({
       data: {
         message,
         reply,
-        userId: TEST_USER_ID,
+        userId: session.user.id,
       },
     });
 

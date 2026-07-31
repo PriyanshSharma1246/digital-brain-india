@@ -13,6 +13,16 @@ pnpm dev
 # or
 bun dev
 ```
+### Required Authentication Environment Variables
+
+The app uses NextAuth for authentication. The following environment variables are required for full auth functionality (Google sign-in + JWT session encryption):
+
+- `NEXTAUTH_SECRET` — a stable, strong secret used to sign and encrypt session JWTs. Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+- `NEXTAUTH_URL` — the canonical URL of your app (e.g. `http://localhost:3000`).
+- `DATABASE_URL` — your database connection string used by Prisma.
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` — credentials for Google OAuth.
+
+If `NEXTAUTH_SECRET` is not set, NextAuth will still sign JWTs but will not encrypt them; this may cause tokens to be invalidated across deployments and can lead to decryption errors if encryption was previously enabled.
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
