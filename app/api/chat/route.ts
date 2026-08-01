@@ -9,6 +9,7 @@ import {
   encodeMessageEntry,
   getConversationFiles,
 } from "@/lib/chatPersistence";
+import { buildKnowledgeContext } from "@/lib/rag";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY ?? "",
@@ -47,9 +48,18 @@ export async function POST(req: Request) {
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
       .join("\n\n---\n\n");
-    const prompt = fileContext
-      ? `Use the following uploaded files to answer the user question. ${fileContext}\n\nQuestion: ${message}`
-      : message;
+    const knowledgeContext = buildKnowledgeContext(message, 4);
+    const prompt = [
+      knowledgeContext
+        ? `You are India Digital Brain, an expert assistant for Indian public services, education, healthcare, agriculture, economy, startups, and laws. Use the retrieved knowledge below before answering.\n\nKnowledge sources:\n${knowledgeContext}`
+        : "",
+      fileContext
+        ? `Uploaded files:\n${fileContext}`
+        : "",
+      `Question: ${message}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     const encoder = new TextEncoder();
     let generator: AsyncGenerator<any, any, any> | null = null;
