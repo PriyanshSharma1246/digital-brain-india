@@ -10,6 +10,7 @@ import {
   getConversationFiles,
 } from "@/lib/chatPersistence";
 import { buildKnowledgeContext } from "@/lib/rag";
+import { searchLiveWeb } from "@/lib/liveIntelligence";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY ?? "",
@@ -48,10 +49,14 @@ export async function POST(req: Request) {
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
       .join("\n\n---\n\n");
-    const knowledgeContext = buildKnowledgeContext(message, 4);
+    const knowledgeContext = await buildKnowledgeContext(message, 4);
+    const liveInfo = await searchLiveWeb(message);
     const prompt = [
       knowledgeContext
         ? `You are India Digital Brain, an expert assistant for Indian public services, education, healthcare, agriculture, economy, startups, and laws. Use the retrieved knowledge below before answering.\n\nKnowledge sources:\n${knowledgeContext}`
+        : "",
+      liveInfo.shouldUseLiveInfo && liveInfo.context
+        ? `Use the live information below when the question requires current or recent data. Include source links in the answer.\n\nLive information:\n${liveInfo.context}`
         : "",
       fileContext
         ? `Uploaded files:\n${fileContext}`

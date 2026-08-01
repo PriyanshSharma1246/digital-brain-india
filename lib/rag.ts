@@ -1,4 +1,5 @@
 import { INDIAN_KNOWLEDGE_BASE, type KnowledgeChunk } from "@/data/indianKnowledge";
+import { prisma } from "@/lib/prisma";
 
 const VECTOR_DIMENSION = 16;
 
@@ -58,9 +59,27 @@ function buildChunkEmbeddings(chunks: KnowledgeChunk[]) {
 
 const knowledgeEmbeddings = buildChunkEmbeddings(INDIAN_KNOWLEDGE_BASE);
 
-export function searchKnowledge(query: string, topK = 4) {
+function toKnowledgeChunk(item: { title: string; content: string; category: string; source: string; tags: string[] }) {
+  return {
+    id: item.title.toLowerCase().replace(/\s+/g, "-"),
+    topic: item.category as KnowledgeChunk["topic"],
+    title: item.title,
+    content: item.content,
+    source: item.source,
+  };
+}
+
+export async function searchKnowledge(query: string, topK = 4) {
+  const [staticChunks, dynamicChunks] = await Promise.all([
+    Promise.resolve(knowledgeEmbeddings),
+    prisma.knowledgeEntry.findMany({ orderBy: { updatedAt: "desc" } }),
+  ]);
+
+  const dynamicEmbeddings = buildChunkEmbeddings(dynamicChunks.map(toKnowledgeChunk));
+  const combined = [...staticChunks, ...dynamicEmbeddings];
+
   const queryVector = encodeText(query);
-  const scored = knowledgeEmbeddings
+  const scored = combined
     .map((chunk) => ({
       ...chunk,
       score: cosineSimilarity(queryVector, chunk.embedding),
@@ -71,8 +90,8 @@ export function searchKnowledge(query: string, topK = 4) {
   return scored.filter((item) => item.score > 0.01);
 }
 
-export function buildKnowledgeContext(query: string, topK = 4) {
-  const results = searchKnowledge(query, topK);
+export async function buildKnowledgeContext(query: string, topK = 4) {
+  const results = await searchKnowledge(query, topK);
   if (!results.length) return "";
 
   return results

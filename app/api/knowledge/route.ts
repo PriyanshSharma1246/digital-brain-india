@@ -1,24 +1,119 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 import { buildKnowledgeContext, searchKnowledge } from "@/lib/rag";
+import {
+  createKnowledgeEntry,
+  deleteKnowledgeEntry,
+  importKnowledgeFile,
+  listKnowledgeEntries,
+  seedKnowledgeBase,
+  updateKnowledgeEntry,
+} from "@/lib/knowledgeService";
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const query = searchParams.get("q") ?? "";
-
-  if (!query.trim()) {
-    return NextResponse.json({ items: [] });
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const items = searchKnowledge(query, 5);
-  return NextResponse.json({
-    items: items.map((item) => ({
-      id: item.id,
-      topic: item.topic,
-      title: item.title,
-      content: item.content,
-      source: item.source,
-      score: item.score,
-    })),
-    context: buildKnowledgeContext(query, 5),
-  });
+  await seedKnowledgeBase();
+
+  const { searchParams } = new URL(req.url);
+  const query = searchParams.get("q") ?? searchParams.get("search") ?? "";
+
+  if (query.trim()) {
+    const items = await searchKnowledge(query, 5);
+    return NextResponse.json({
+      items: items.map((item) => ({
+        id: item.id,
+        topic: item.topic,
+        title: item.title,
+        content: item.content,
+        source: item.source,
+        score: item.score,
+      })),
+      context: buildKnowledgeContext(query, 5),
+      entries: await listKnowledgeEntries(query),
+    });
+  }
+
+  return NextResponse.json({ entries: await listKnowledgeEntries(query) });
+}
+
+export async function POST(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const formData = await req.formData();
+  const file = formData.get("file");
+  const title = formData.get("title")?.toString() ?? "";
+  const content = formData.get("content")?.toString() ?? "";
+  const category = formData.get("category")?.toString() ?? "Other";
+  const source = formData.get("source")?.toString() ?? "User";
+  const tags = formData.get("tags")?.toString() ?? "";
+
+  try {
+    if (file && file instanceof File) {
+      const entry = await importKnowledgeFile(file, category, source, tags.split(","));
+      return NextResponse.json({ success: true, entry });
+    }
+
+    if (!title.trim() || !content.trim()) {
+      return NextResponse.json({ success: false, error: "Title and content are required" }, { status: 400 });
+    }
+
+    const entry = await createKnowledgeEntry({ title, content, category, source, tags });
+    return NextResponse.json({ success: true, entry });
+  } catch (error) {
+    return NextResponse.json({ success: false, error: "Unable to save knowledge entry" }, { status: 500 });
+  }
+}
+
+export async function PUT(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const formData = await req.formData();
+  const id = formData.get("id")?.toString();
+  const title = formData.get("title")?.toString();
+  const content = formData.get("content")?.toString();
+  const category = formData.get("category")?.toString();
+  const source = formData.get("source")?.toString();
+  const tags = formData.get("tags")?.toString();
+
+  if (!id) {
+    return NextResponse.json({ success: false, error: "Missing knowledge id" }, { status: 400 });
+  }
+
+  try {
+    const entry = await updateKnowledgeEntry(id, { title, content, category, source, tags });
+    return NextResponse.json({ success: true, entry });
+  } catch (error) {
+    return NextResponse.json({ success: false, error: "Unable to update knowledge entry" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.id) {
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const id = searchParams.get("id");
+  if (!id) {
+    return NextResponse.json({ success: false, error: "Missing knowledge id" }, { status: 400 });
+  }
+
+  try {
+    await deleteKnowledgeEntry(id);
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json({ success: false, error: "Unable to delete knowledge entry" }, { status: 500 });
+  }
 }

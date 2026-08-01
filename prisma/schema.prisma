@@ -26,3 +26,16 @@ model Chat {
   userId String
   user   User @relation(fields: [userId], references: [id])
 }
+
+model KnowledgeEntry {
+  id        String   @id @default(cuid())
+  title     String
+  content   String
+  category  String
+  source    String
+  tags      String[]
+  fileName  String?
+  fileType  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
