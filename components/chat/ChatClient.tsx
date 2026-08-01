@@ -8,6 +8,18 @@ import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
 import AgentSelector from "@/components/chat/AgentSelector";
 import { type AgentId } from "@/lib/agents";
+import { parseImageAttachment } from "@/lib/multimodal";
+
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: Event) => void) | null;
+  onerror: ((event: Event) => void) | null;
+  onend: (() => void) | null;
+};
 
 type ChatClientProps = {
   user: {
@@ -32,6 +44,11 @@ export default function ChatClient({ user }: ChatClientProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [assistantMessageId, setAssistantMessageId] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageAttachment, setImageAttachment] = useState<string | null>(null);
+  const [recognition, setRecognition] = useState<SpeechRecognitionLike | null>(null);
   const [activeAgent, setActiveAgent] = useState<AgentId>("general");
   const [conversationAgents, setConversationAgents] = useState<Record<string, AgentId>>(() => {
     if (typeof window === "undefined") return {};
@@ -56,6 +73,45 @@ export default function ChatClient({ user }: ChatClientProps) {
       setActiveAgent(conversationAgents[activeId] ?? "general");
     }
   }, [activeId, conversationAgents]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const SpeechRecognitionCtor =
+      (window as Window & typeof globalThis & { SpeechRecognition?: new () => SpeechRecognitionLike }).SpeechRecognition ||
+      (window as Window & typeof globalThis & { webkitSpeechRecognition?: new () => SpeechRecognitionLike }).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setVoiceStatus("Voice input is not supported in this browser.");
+      return;
+    }
+
+    const recognitionInstance = new SpeechRecognitionCtor();
+    recognitionInstance.lang = "en-IN";
+    recognitionInstance.continuous = false;
+    recognitionInstance.interimResults = true;
+
+    recognitionInstance.onresult = (event: Event & { results?: ArrayLike<ArrayLike<{ transcript?: string }>> }) => {
+      const results = event.results ?? [];
+      const transcript = Array.from(results)
+        .map((result) => result[0]?.transcript ?? "")
+        .join(" ");
+      setInput(transcript);
+      setVoiceStatus("Voice capture complete.");
+    };
+
+    recognitionInstance.onerror = () => {
+      setVoiceStatus("Voice capture failed. Please try again.");
+      setIsRecording(false);
+    };
+
+    recognitionInstance.onend = () => {
+      setIsRecording(false);
+      setVoiceStatus(null);
+    };
+
+    setRecognition(recognitionInstance);
+  }, []);
 
   useEffect(() => {
     async function loadHistory() {
@@ -115,12 +171,19 @@ export default function ChatClient({ user }: ChatClientProps) {
     [assistantMessageId, updateMessages]
   );
 
+  function resetMultimodalState() {
+    setImagePreview(null);
+    setImageAttachment(null);
+    setVoiceStatus(null);
+  }
+
   function newConversation() {
     const fresh = createConversation();
     setConversations((prev) => [fresh, ...prev]);
     setActiveId(fresh.id);
     setInput("");
     setActiveAgent("general");
+    resetMultimodalState();
     setSidebarOpen(false);
   }
 
@@ -129,6 +192,30 @@ export default function ChatClient({ user }: ChatClientProps) {
     if (activeId) {
       setConversationAgents((prev) => ({ ...prev, [activeId]: nextAgent }));
     }
+  }
+
+  function toggleVoiceRecording() {
+    if (!recognition) {
+      setVoiceStatus("Voice input is not supported in this browser.");
+      return;
+    }
+
+    if (isRecording) {
+      recognition.stop();
+      setIsRecording(false);
+      setVoiceStatus("Stopping voice recording...");
+      return;
+    }
+
+    setIsRecording(true);
+    setVoiceStatus("Listening...");
+    recognition.start();
+  }
+
+  function removeImage() {
+    setImagePreview(null);
+    setImageAttachment(null);
+    setUploadStatus(null);
   }
 
   async function deleteConversation(id: string) {
@@ -158,7 +245,7 @@ export default function ChatClient({ user }: ChatClientProps) {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || isLoading || isUploading) return;
+    if ((!text && !imageAttachment) || isLoading || isUploading) return;
 
     let currentId = activeId;
     let currentConversation = activeConversation;
@@ -185,7 +272,7 @@ export default function ChatClient({ user }: ChatClientProps) {
       );
     }
 
-    const userMsg = createMessage("user", text);
+    const userMsg = createMessage("user", text || (imageAttachment ? "[Image attached]" : ""));
     const assistantId = createId();
     const assistantMsg: ChatMessage = {
       ...createMessage("assistant", ""),
@@ -196,6 +283,7 @@ export default function ChatClient({ user }: ChatClientProps) {
     setAssistantMessageId(assistantId);
     setInput("");
     setIsLoading(true);
+    resetMultimodalState();
 
     const controller = new AbortController();
     setAbortController(controller);
@@ -209,6 +297,7 @@ export default function ChatClient({ user }: ChatClientProps) {
           conversationId: currentId,
           conversationTitle: title,
           agent: activeAgent,
+          image: imageAttachment,
         }),
         signal: controller.signal,
       });
@@ -296,6 +385,25 @@ export default function ChatClient({ user }: ChatClientProps) {
 
   async function handleFileAttach(file: File) {
     if (isUploading || isLoading) return;
+
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result === "string") {
+          const parsed = parseImageAttachment(result);
+          if (parsed) {
+            setImagePreview(result);
+            setImageAttachment(result);
+            setUploadStatus(`Image ready: ${file.name}`);
+          } else {
+            setUploadStatus("Unsupported image payload.");
+          }
+        }
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
 
     let currentId = activeId;
     let currentConversation = activeConversation;
@@ -470,10 +578,15 @@ export default function ChatClient({ user }: ChatClientProps) {
               onSend={sendMessage}
               onStop={stopGenerating}
               onAttach={handleFileAttach}
+              onVoiceToggle={toggleVoiceRecording}
               isLoading={isLoading}
               isUploading={isUploading}
+              isRecording={isRecording}
               uploadingFileName={uploadingFileName ?? undefined}
               uploadStatus={uploadStatus ?? undefined}
+              voiceStatus={voiceStatus ?? undefined}
+              imagePreview={imagePreview}
+              onRemoveImage={removeImage}
               disabled={isUploading}
             />
             <p className="mt-2 text-center text-[11px] text-slate-600">

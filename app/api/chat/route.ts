@@ -12,6 +12,7 @@ import {
 import { buildKnowledgeContext } from "@/lib/rag";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
 import { getAgent } from "@/lib/agents";
+import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY ?? "",
@@ -27,9 +28,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const { message, conversationId, conversationTitle, agent } = await req.json();
+    const { message, conversationId, conversationTitle, agent, image } = await req.json();
+    const incomingMessage = typeof message === "string" ? message : "";
+    const hasImage = Boolean(
+      typeof image === "string" && image.startsWith("data:image/")
+    );
 
-    if (!message || typeof message !== "string") {
+    if (!incomingMessage.trim() && !hasImage) {
       return NextResponse.json(
         { success: false, error: "Message is required" },
         { status: 400 }
@@ -43,16 +48,17 @@ export async function POST(req: Request) {
 
     const encodedMessage =
       conversationTitle && conversationTitle !== "New chat"
-        ? encodeConversationMeta(conversation, conversationTitle, message)
-        : encodeMessageEntry(conversation, message);
+        ? encodeConversationMeta(conversation, conversationTitle, incomingMessage || "[Image attached]")
+        : encodeMessageEntry(conversation, incomingMessage || "[Image attached]");
 
     const agentDefinition = getAgent(agent);
     const fileEntries = await getConversationFiles(session.user.id, conversation);
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
       .join("\n\n---\n\n");
-    const knowledgeContext = await buildKnowledgeContext(message, 4);
-    const liveInfo = await searchLiveWeb(message);
+    const knowledgeContext = await buildKnowledgeContext(incomingMessage, 4);
+    const liveInfo = await searchLiveWeb(incomingMessage);
+    const imagePayload = parseImageAttachment(image);
     const prompt = [
       `System role: ${agentDefinition.systemPrompt}`,
       knowledgeContext
@@ -64,11 +70,12 @@ export async function POST(req: Request) {
       fileContext
         ? `Uploaded files:\n${fileContext}`
         : "",
-      `Question: ${message}`,
+      `Question: ${incomingMessage || "Please analyze the uploaded image."}`,
     ]
       .filter(Boolean)
       .join("\n\n");
 
+    const multimodalPayload = buildMultimodalPrompt(prompt, imagePayload);
     const encoder = new TextEncoder();
     let generator: AsyncGenerator<any, any, any> | null = null;
     let finalReply = "";
@@ -79,7 +86,12 @@ export async function POST(req: Request) {
         async function createGenerator(model: string) {
           return ai.models.generateContentStream({
             model,
-            contents: prompt,
+            contents: [
+              {
+                role: "user",
+                parts: multimodalPayload.parts,
+              },
+            ],
           });
         }
 

@@ -147,6 +147,21 @@ export default function ChatBubble({
     }
   }
 
+  function speakMessage() {
+    if (typeof window === "undefined") return;
+    const plainText = message
+      .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+      .replace(/[#>*_`~]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (!plainText) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(plainText);
+    utterance.lang = "en-IN";
+    window.speechSynthesis.speak(utterance);
+  }
+
   return (
     <div
       className={`group flex w-full items-start gap-3 ${
@@ -200,6 +215,17 @@ export default function ChatBubble({
           }`}
         >
           {createdAt ? <span>{formatTime(createdAt)}</span> : null}
+
+          {!isUser ? (
+            <button
+              type="button"
+              onClick={speakMessage}
+              className="opacity-0 transition hover:text-slate-300 focus:opacity-100 group-hover:opacity-100"
+              aria-label="Speak message"
+            >
+              Speak
+            </button>
+          ) : null}
 
           <button
             type="button"
