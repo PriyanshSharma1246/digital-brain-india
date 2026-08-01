@@ -13,6 +13,8 @@ import { buildKnowledgeContext } from "@/lib/rag";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
 import { getAgent } from "@/lib/agents";
 import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
+import { sanitizeTextInput } from "@/lib/sanitize";
+import { logError } from "@/lib/logger";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY ?? "",
@@ -29,7 +31,7 @@ export async function POST(req: Request) {
     }
 
     const { message, conversationId, conversationTitle, agent, image } = await req.json();
-    const incomingMessage = typeof message === "string" ? message : "";
+    const incomingMessage = sanitizeTextInput(typeof message === "string" ? message : "", { maxLength: 4000 });
     const hasImage = Boolean(
       typeof image === "string" && image.startsWith("data:image/")
     );
@@ -167,7 +169,7 @@ export async function POST(req: Request) {
             )
           );
         } catch (error) {
-          console.error("Chat stream error:", error);
+          logError("Chat stream error", { userId: session.user.id, conversationId: conversation });
           controller.enqueue(
             encoder.encode(
               JSON.stringify({

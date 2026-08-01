@@ -89,9 +89,9 @@ export default function ChatInput({
         rows={1}
         autoFocus
         aria-multiline="true"
+        aria-label="Chat message"
         disabled={isLoading || disabled}
         className="max-h-[200px] min-h-[24px] flex-1 resize-none bg-transparent text-[15px] text-slate-100 outline-none placeholder:text-slate-500 disabled:opacity-50"
-        aria-label="Chat message"
       />
 
       <input

@@ -13,8 +13,7 @@ model User {
   email     String   @unique
   password  String
   createdAt DateTime @default(now())
-
-  chats Chat[]
+  chats     Chat[]
 }
 
 model Chat {
@@ -22,9 +21,8 @@ model Chat {
   message   String
   reply     String
   createdAt DateTime @default(now())
-
-  userId String
-  user   User @relation(fields: [userId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model KnowledgeEntry {
@@ -34,7 +32,7 @@ model KnowledgeEntry {
   category  String
   source    String
   tags      String[]
-  fileName  String?
+  fileName  String?  
   fileType  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

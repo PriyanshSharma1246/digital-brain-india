@@ -10,6 +10,8 @@ import {
   seedKnowledgeBase,
   updateKnowledgeEntry,
 } from "@/lib/knowledgeService";
+import { sanitizeTagInput, sanitizeTextInput } from "@/lib/sanitize";
+import { logError } from "@/lib/logger";
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
@@ -49,15 +51,15 @@ export async function POST(req: Request) {
 
   const formData = await req.formData();
   const file = formData.get("file");
-  const title = formData.get("title")?.toString() ?? "";
-  const content = formData.get("content")?.toString() ?? "";
-  const category = formData.get("category")?.toString() ?? "Other";
-  const source = formData.get("source")?.toString() ?? "User";
-  const tags = formData.get("tags")?.toString() ?? "";
+  const title = sanitizeTextInput(formData.get("title")?.toString() ?? "", { maxLength: 160 });
+  const content = sanitizeTextInput(formData.get("content")?.toString() ?? "", { maxLength: 20000, preserveLineBreaks: true });
+  const category = sanitizeTextInput(formData.get("category")?.toString() ?? "Other", { maxLength: 80 });
+  const source = sanitizeTextInput(formData.get("source")?.toString() ?? "User", { maxLength: 120 });
+  const tags = sanitizeTagInput(formData.get("tags")?.toString() ?? "");
 
   try {
     if (file && file instanceof File) {
-      const entry = await importKnowledgeFile(file, category, source, tags.split(","));
+      const entry = await importKnowledgeFile(file, category, source, tags);
       return NextResponse.json({ success: true, entry });
     }
 
@@ -68,6 +70,7 @@ export async function POST(req: Request) {
     const entry = await createKnowledgeEntry({ title, content, category, source, tags });
     return NextResponse.json({ success: true, entry });
   } catch (error) {
+    logError("Knowledge entry creation failed", { userId: session.user.id, title, category });
     return NextResponse.json({ success: false, error: "Unable to save knowledge entry" }, { status: 500 });
   }
 }
@@ -80,11 +83,11 @@ export async function PUT(req: Request) {
 
   const formData = await req.formData();
   const id = formData.get("id")?.toString();
-  const title = formData.get("title")?.toString();
-  const content = formData.get("content")?.toString();
-  const category = formData.get("category")?.toString();
-  const source = formData.get("source")?.toString();
-  const tags = formData.get("tags")?.toString();
+  const title = formData.get("title")?.toString() ? sanitizeTextInput(formData.get("title")?.toString() ?? "", { maxLength: 160 }) : undefined;
+  const content = formData.get("content")?.toString() ? sanitizeTextInput(formData.get("content")?.toString() ?? "", { maxLength: 20000, preserveLineBreaks: true }) : undefined;
+  const category = formData.get("category")?.toString() ? sanitizeTextInput(formData.get("category")?.toString() ?? "", { maxLength: 80 }) : undefined;
+  const source = formData.get("source")?.toString() ? sanitizeTextInput(formData.get("source")?.toString() ?? "", { maxLength: 120 }) : undefined;
+  const tags = formData.get("tags")?.toString() ? sanitizeTagInput(formData.get("tags")?.toString() ?? "") : undefined;
 
   if (!id) {
     return NextResponse.json({ success: false, error: "Missing knowledge id" }, { status: 400 });
@@ -94,6 +97,7 @@ export async function PUT(req: Request) {
     const entry = await updateKnowledgeEntry(id, { title, content, category, source, tags });
     return NextResponse.json({ success: true, entry });
   } catch (error) {
+    logError("Knowledge entry update failed", { userId: session.user.id, id });
     return NextResponse.json({ success: false, error: "Unable to update knowledge entry" }, { status: 500 });
   }
 }
@@ -114,6 +118,7 @@ export async function DELETE(req: Request) {
     await deleteKnowledgeEntry(id);
     return NextResponse.json({ success: true });
   } catch (error) {
+    logError("Knowledge entry deletion failed", { userId: session.user.id, id });
     return NextResponse.json({ success: false, error: "Unable to delete knowledge entry" }, { status: 500 });
   }
 }
