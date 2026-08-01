@@ -11,6 +11,7 @@ import {
 } from "@/lib/chatPersistence";
 import { buildKnowledgeContext } from "@/lib/rag";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
+import { getAgent } from "@/lib/agents";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY ?? "",
@@ -26,7 +27,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const { message, conversationId, conversationTitle } = await req.json();
+    const { message, conversationId, conversationTitle, agent } = await req.json();
 
     if (!message || typeof message !== "string") {
       return NextResponse.json(
@@ -45,6 +46,7 @@ export async function POST(req: Request) {
         ? encodeConversationMeta(conversation, conversationTitle, message)
         : encodeMessageEntry(conversation, message);
 
+    const agentDefinition = getAgent(agent);
     const fileEntries = await getConversationFiles(session.user.id, conversation);
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
@@ -52,6 +54,7 @@ export async function POST(req: Request) {
     const knowledgeContext = await buildKnowledgeContext(message, 4);
     const liveInfo = await searchLiveWeb(message);
     const prompt = [
+      `System role: ${agentDefinition.systemPrompt}`,
       knowledgeContext
         ? `You are India Digital Brain, an expert assistant for Indian public services, education, healthcare, agriculture, economy, startups, and laws. Use the retrieved knowledge below before answering.\n\nKnowledge sources:\n${knowledgeContext}`
         : "",

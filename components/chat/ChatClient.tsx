@@ -6,6 +6,8 @@ import { createConversation, createMessage, createId, deriveTitle } from "@/lib/
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
+import AgentSelector from "@/components/chat/AgentSelector";
+import { type AgentId } from "@/lib/agents";
 
 type ChatClientProps = {
   user: {
@@ -30,6 +32,30 @@ export default function ChatClient({ user }: ChatClientProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [assistantMessageId, setAssistantMessageId] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [activeAgent, setActiveAgent] = useState<AgentId>("general");
+  const [conversationAgents, setConversationAgents] = useState<Record<string, AgentId>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = window.localStorage.getItem("india-digital-brain-agents");
+      if (!stored) return {};
+      const parsed = JSON.parse(stored) as Record<string, AgentId>;
+      return parsed;
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("india-digital-brain-agents", JSON.stringify(conversationAgents));
+    }
+  }, [conversationAgents]);
+
+  useEffect(() => {
+    if (activeId) {
+      setActiveAgent(conversationAgents[activeId] ?? "general");
+    }
+  }, [activeId, conversationAgents]);
 
   useEffect(() => {
     async function loadHistory() {
@@ -94,7 +120,15 @@ export default function ChatClient({ user }: ChatClientProps) {
     setConversations((prev) => [fresh, ...prev]);
     setActiveId(fresh.id);
     setInput("");
+    setActiveAgent("general");
     setSidebarOpen(false);
+  }
+
+  function handleAgentChange(nextAgent: AgentId) {
+    setActiveAgent(nextAgent);
+    if (activeId) {
+      setConversationAgents((prev) => ({ ...prev, [activeId]: nextAgent }));
+    }
   }
 
   async function deleteConversation(id: string) {
@@ -174,6 +208,7 @@ export default function ChatClient({ user }: ChatClientProps) {
           message: text,
           conversationId: currentId,
           conversationTitle: title,
+          agent: activeAgent,
         }),
         signal: controller.signal,
       });
@@ -428,6 +463,7 @@ export default function ChatClient({ user }: ChatClientProps) {
 
         <div className="border-t border-slate-800 px-4 pb-4 pt-3 sm:px-6 sm:pb-6">
           <div className="mx-auto max-w-3xl">
+            <AgentSelector value={activeAgent} onChange={handleAgentChange} />
             <ChatInput
               value={input}
               onChange={setInput}
