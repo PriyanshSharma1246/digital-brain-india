@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, ApiError } from "@google/genai";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { createId } from "@/lib/chatStorage";
@@ -16,12 +16,55 @@ import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
 import { sanitizeTextInput } from "@/lib/sanitize";
 import { logError } from "@/lib/logger";
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY ?? "",
-});
+/**
+ * Extracts a human-readable error message from a thrown value.
+ * Handles the SDK's ApiError (which carries an HTTP status) and generic Errors.
+ */
+function extractApiError(error: unknown): string {
+  if (error instanceof ApiError) {
+    return `Gemini API Error (status ${error.status}): ${error.message}`;
+  }
+  if (error instanceof Error) {
+    return `Gemini API Error: ${error.message}`;
+  }
+  return `Gemini API Error: ${String(error)}`;
+}
 
 export async function POST(req: Request) {
   try {
+    // 1. Check API Key
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
+      console.error("API Key Loaded: false - GEMINI_API_KEY is missing in environment.");
+      return NextResponse.json(
+        { success: false, error: "Server Configuration Error: API key missing." },
+        { status: 500 }
+      );
+    }
+
+    // Validate the API key format. Google AI Studio Gemini API keys start with
+    // either "AIza" (legacy format, ~39 characters) or "AQ." (new format).
+    if (!/^(AIza[0-9A-Za-z_-]{35}|AQ\.[0-9A-Za-z_-]{10,})$/.test(apiKey)) {
+      console.error(
+        "API Key Loaded: true but INVALID FORMAT. " +
+        "Gemini API keys must start with 'AIza' or 'AQ.'. " +
+        "Current key starts with: " + apiKey.slice(0, 4) + "..."
+      );
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "Server Configuration Error: GEMINI_API_KEY has an invalid format. " +
+            "Get a valid key from https://aistudio.google.com/apikey (it should start with 'AIza' or 'AQ.').",
+        },
+        { status: 500 }
+      );
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+
+    // 2. Auth Check
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
       return NextResponse.json(
@@ -61,6 +104,7 @@ export async function POST(req: Request) {
     const knowledgeContext = await buildKnowledgeContext(incomingMessage, 4);
     const liveInfo = await searchLiveWeb(incomingMessage);
     const imagePayload = parseImageAttachment(image);
+
     const prompt = [
       `System role: ${agentDefinition.systemPrompt}`,
       knowledgeContext
@@ -97,37 +141,47 @@ export async function POST(req: Request) {
           });
         }
 
-        try {
-          generator = await createGenerator("gemini-2.0-flash");
-        } catch (error) {
-          console.warn(
-            "Primary model unavailable, falling back to gemini-1.5-flash",
-            error
-          );
+        // Try candidate models in order until one initializes. Newer "AQ."
+        // keys may no longer have access to older models (e.g.
+        // gemini-2.5-flash returns 404 "no longer available to new users",
+        // gemini-2.0-flash may return 429 quota exhaustion).
+        const candidateModels = [
+          "gemini-3-flash-preview",
+          "gemini-2.5-flash",
+          "gemini-2.0-flash",
+        ];
+        let initErrorDetails: string | null = null;
+
+        for (const model of candidateModels) {
           try {
-            generator = await createGenerator("gemini-1.5-flash");
-          } catch (fallbackError) {
-            streamError =
-              "Unable to stream from Gemini. Please try again later.";
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: "error",
-                  error: streamError,
-                }) + "\n"
-              )
+            generator = await createGenerator(model);
+            break;
+          } catch (error) {
+            initErrorDetails = extractApiError(error);
+            console.warn(
+              `Model "${model}" failed, attempting next model...\n${initErrorDetails}`
             );
-            controller.close();
-            return;
           }
         }
 
         if (!generator) {
+          const errorDetails =
+            initErrorDetails ?? "Unable to initialize Gemini stream.";
+          console.error(`Gemini API stream init failed:\n${errorDetails}`);
+          logError("Gemini API stream init failed", {
+            userId: session.user.id,
+            conversationId: conversation,
+            error: errorDetails,
+          });
+          streamError =
+            "Unable to stream from Gemini: the configured models are " +
+            "unavailable for this API key or the quota has been exceeded. " +
+            "Please check your plan/billing or try again later.";
           controller.enqueue(
             encoder.encode(
               JSON.stringify({
                 type: "error",
-                error: "Unable to initialize Gemini stream.",
+                error: streamError,
               }) + "\n"
             )
           );
@@ -137,7 +191,8 @@ export async function POST(req: Request) {
 
         try {
           for await (const chunk of generator) {
-            const text = typeof chunk?.text === "string" ? chunk.text : "";
+            // `text` is a getter property on GenerateContentResponse in @google/genai v2.x
+            const text = typeof chunk?.text === "function" ? chunk.text() : (chunk?.text || "");
             if (!text) continue;
             finalReply += text;
             controller.enqueue(
@@ -169,7 +224,13 @@ export async function POST(req: Request) {
             )
           );
         } catch (error) {
-          logError("Chat stream error", { userId: session.user.id, conversationId: conversation });
+          const streamErrorDetails = extractApiError(error);
+          console.error(`Stream reading error:\n${streamErrorDetails}`);
+          logError("Chat stream error", {
+            userId: session.user.id,
+            conversationId: conversation,
+            error: streamErrorDetails,
+          });
           controller.enqueue(
             encoder.encode(
               JSON.stringify({
@@ -198,7 +259,8 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
-    console.error("Chat API error:", error);
+    const errorDetails = extractApiError(error);
+    console.error(`Chat API error:\n${errorDetails}`);
 
     return NextResponse.json(
       { success: false, error: "Server error" },

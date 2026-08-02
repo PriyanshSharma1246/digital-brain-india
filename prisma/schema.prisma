@@ -37,3 +37,31 @@ model KnowledgeEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+/// A government document ingested into the RAG knowledge engine.
+model KnowledgeDocument {
+  id          String             @id @default(cuid())
+  title       String
+  category    String
+  source      String
+  content     String
+  /// Filesystem path of the source markdown file (used to avoid duplicate imports).
+  sourcePath  String?            @unique
+  /// Hash of the raw content used to detect content changes on re-scan.
+  contentHash String?
+  createdAt   DateTime           @default(now())
+  chunks      KnowledgeChunk[]
+}
+
+/// A fixed-size chunk of a KnowledgeDocument ready for embedding and retrieval.
+model KnowledgeChunk {
+  id         String             @id @default(cuid())
+  documentId String
+  content    String
+  /// Zero-based position of the chunk within its document (preserves order).
+  chunkIndex Int
+  /// Vector embedding. Kept nullable until the embedding provider is wired up.
+  embedding  Json?
+  createdAt  DateTime           @default(now())
+  document   KnowledgeDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+}

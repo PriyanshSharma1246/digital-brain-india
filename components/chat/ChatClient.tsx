@@ -141,10 +141,10 @@ export default function ChatClient({ user }: ChatClientProps) {
   }, []);
 
   const updateMessages = useCallback(
-    (updater: (prev: ChatMessage[]) => ChatMessage[]) => {
+    (updater: (prev: ChatMessage[]) => ChatMessage[], conversationId: string | null = activeId) => {
       setConversations((prev) => {
         const updated = prev.map((c) => {
-          if (c.id !== activeId) return c;
+          if (c.id !== conversationId) return c;
           return {
             ...c,
             messages: updater(c.messages),
@@ -279,7 +279,7 @@ export default function ChatClient({ user }: ChatClientProps) {
       id: assistantId,
     };
 
-    updateMessages((prev) => [...prev, userMsg, assistantMsg]);
+    updateMessages((prev) => [...prev, userMsg, assistantMsg], currentId);
     setAssistantMessageId(assistantId);
     setInput("");
     setIsLoading(true);
@@ -302,17 +302,29 @@ export default function ChatClient({ user }: ChatClientProps) {
         signal: controller.signal,
       });
 
+      const updateStreamingAssistantMessage = (message: string, isError = false) => {
+        updateMessages(
+          (prev) =>
+            prev.map((messageItem) =>
+              messageItem.id === assistantId
+                ? { ...messageItem, message, isError }
+                : messageItem
+            ),
+          currentId
+        );
+      };
+
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null);
         const errorMessage =
           errorPayload?.error ||
           "Failed to stream AI response. Please try again.";
-        updateAssistantMessage(errorMessage, true);
+        updateStreamingAssistantMessage(errorMessage, true);
         return;
       }
 
       if (!response.body) {
-        updateAssistantMessage(
+        updateStreamingAssistantMessage(
           "AI stream unavailable. Please try again.",
           true
         );
@@ -325,43 +337,65 @@ export default function ChatClient({ user }: ChatClientProps) {
       let partial = "";
       let finished = false;
 
+      const processLine = (line: string) => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+
+        try {
+          const payload = JSON.parse(trimmed) as {
+            type?: string;
+            text?: string;
+            reply?: string;
+            error?: string;
+          };
+
+          if (payload.type === "chunk" && typeof payload.text === "string") {
+            partial += payload.text;
+            updateStreamingAssistantMessage(partial);
+          }
+
+          if (payload.type === "done" && typeof payload.reply === "string") {
+            finished = true;
+            updateStreamingAssistantMessage(payload.reply);
+          }
+
+          if (payload.type === "error" && typeof payload.error === "string") {
+            updateStreamingAssistantMessage(payload.error, true);
+          }
+        } catch {
+          // Ignore invalid partial lines.
+        }
+      };
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
 
-        let newlineIndex = buffer.indexOf("\n");
-        while (newlineIndex !== -1) {
-          const line = buffer.slice(0, newlineIndex).trim();
-          buffer = buffer.slice(newlineIndex + 1);
-          newlineIndex = buffer.indexOf("\n");
+        for (const line of lines) {
+          processLine(line);
+        }
+      }
 
-          if (!line) continue;
+      if (buffer.trim()) {
+        processLine(buffer);
+      }
 
-          try {
-            const payload = JSON.parse(line);
-            if (payload.type === "chunk" && typeof payload.text === "string") {
-              partial += payload.text;
-              updateAssistantMessage(partial);
-            }
+      const trailing = decoder.decode();
+      if (trailing) {
+        const lines = (buffer + trailing).split("\n");
+        buffer = lines.pop() ?? "";
 
-            if (payload.type === "done" && typeof payload.reply === "string") {
-              finished = true;
-              updateAssistantMessage(payload.reply);
-            }
-
-            if (payload.type === "error" && typeof payload.error === "string") {
-              updateAssistantMessage(payload.error, true);
-            }
-          } catch {
-            // Ignore invalid partial lines.
-          }
+        for (const line of lines) {
+          processLine(line);
         }
       }
 
       if (!finished && partial) {
-        updateAssistantMessage(partial);
+        updateStreamingAssistantMessage(partial);
       }
     } catch (error: unknown) {
       const isAbort =
@@ -371,9 +405,14 @@ export default function ChatClient({ user }: ChatClientProps) {
         (error as { name?: string }).name === "AbortError";
 
       if (!isAbort) {
-        updateAssistantMessage(
-          "❌ Failed to contact AI. Please check your connection and try again.",
-          true
+        updateMessages(
+          (prev) =>
+            prev.map((messageItem) =>
+              messageItem.id === assistantId
+                ? { ...messageItem, message: "❌ Failed to contact AI. Please check your connection and try again.", isError: true }
+                : messageItem
+            ),
+          currentId
         );
       }
     } finally {
