@@ -37,4 +37,10 @@ export type ChatApiResponse = {
   chatId?: string;
   conversationId?: string;
   error?: string;
+  /** Titles of documents retrieved from the knowledge base (RAG). */
+  retrievedDocumentTitles?: string[];
+  /** Filesystem paths of the source documents (RAG). */
+  sourcePaths?: string[];
+  /** True when the RAG pipeline found and injected knowledge into the prompt. */
+  ragUsed?: boolean;
 };

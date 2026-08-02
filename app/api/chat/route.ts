@@ -9,7 +9,8 @@ import {
   encodeMessageEntry,
   getConversationFiles,
 } from "@/lib/chatPersistence";
-import { buildKnowledgeContext } from "@/lib/rag";
+import { searchKnowledge, buildKnowledgeContext } from "@/lib/ai/rag";
+import type { RetrievedChunk } from "@/lib/ai/search";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
 import { getAgent } from "@/lib/agents";
 import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
@@ -101,7 +102,10 @@ export async function POST(req: Request) {
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
       .join("\n\n---\n\n");
-    const knowledgeContext = await buildKnowledgeContext(incomingMessage, 4);
+    const searchResult = await searchKnowledge(incomingMessage, { topK: 4 });
+    const retrievedChunks: RetrievedChunk[] = searchResult.chunks;
+    const knowledgeContext =
+      retrievedChunks.length > 0 ? buildKnowledgeContext(retrievedChunks) : "";
     const liveInfo = await searchLiveWeb(incomingMessage);
     const imagePayload = parseImageAttachment(image);
 
@@ -220,6 +224,9 @@ export async function POST(req: Request) {
                 type: "done",
                 reply: finalReply,
                 conversationId: conversation,
+                retrievedDocumentTitles: retrievedChunks.map((c) => c.documentTitle),
+                sourcePaths: retrievedChunks.map((c) => c.sourcePath ?? c.source),
+                ragUsed: retrievedChunks.length > 0,
               }) + "\n"
             )
           );

@@ -23,6 +23,8 @@ export interface RetrievedChunk {
   category: string;
   /** Source attribution (e.g. "Ministry of Agriculture"). */
   source: string;
+  /** Filesystem path of the source markdown file (null when not tracked). */
+  sourcePath: string | null;
   /** Relevance score from the retriever. */
   score: number;
 }
@@ -64,6 +66,7 @@ export async function findChunksByKeyword(options: RetrieveOptions = {}): Promis
           title: true,
           category: true,
           source: true,
+          sourcePath: true,
         },
       },
     },
@@ -78,6 +81,7 @@ export async function findChunksByKeyword(options: RetrieveOptions = {}): Promis
     documentTitle: row.document.title,
     category: row.document.category,
     source: row.document.source,
+    sourcePath: row.document.sourcePath,
     score: 0,
   }));
 }

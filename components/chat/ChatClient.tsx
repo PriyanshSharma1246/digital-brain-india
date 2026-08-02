@@ -347,6 +347,9 @@ export default function ChatClient({ user }: ChatClientProps) {
             text?: string;
             reply?: string;
             error?: string;
+            retrievedDocumentTitles?: string[];
+            sourcePaths?: string[];
+            ragUsed?: boolean;
           };
 
           if (payload.type === "chunk" && typeof payload.text === "string") {
