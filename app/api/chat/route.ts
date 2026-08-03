@@ -9,7 +9,8 @@ import {
   encodeMessageEntry,
   getConversationFiles,
 } from "@/lib/chatPersistence";
-import { searchKnowledge, buildKnowledgeContext } from "@/lib/ai/rag";
+import { searchKnowledge } from "@/lib/ai/rag";
+import { buildChatPrompt } from "@/lib/ai/promptBuilder";
 import type { RetrievedChunk } from "@/lib/ai/search";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
 import { getAgent } from "@/lib/agents";
@@ -104,26 +105,20 @@ export async function POST(req: Request) {
       .join("\n\n---\n\n");
     const searchResult = await searchKnowledge(incomingMessage, { topK: 4 });
     const retrievedChunks: RetrievedChunk[] = searchResult.chunks;
-    const knowledgeContext =
-      retrievedChunks.length > 0 ? buildKnowledgeContext(retrievedChunks) : "";
     const liveInfo = await searchLiveWeb(incomingMessage);
     const imagePayload = parseImageAttachment(image);
 
-    const prompt = [
-      `System role: ${agentDefinition.systemPrompt}`,
-      knowledgeContext
-        ? `You are India Digital Brain, an expert assistant for Indian public services, education, healthcare, agriculture, economy, startups, and laws. Use the retrieved knowledge below before answering.\n\nKnowledge sources:\n${knowledgeContext}`
-        : "",
-      liveInfo.shouldUseLiveInfo && liveInfo.context
-        ? `Use the live information below when the question requires current or recent data. Include source links in the answer.\n\nLive information:\n${liveInfo.context}`
-        : "",
-      fileContext
-        ? `Uploaded files:\n${fileContext}`
-        : "",
-      `Question: ${incomingMessage || "Please analyze the uploaded image."}`,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    // Prompt assembly is delegated to the prompt builder so the route stays
+    // free of retrieval/formatting concerns. When no chunks are found the
+    // builder produces a normal chat prompt (RAG block omitted).
+    const { prompt, ragUsed } = buildChatPrompt({
+      agent: agentDefinition,
+      message: incomingMessage,
+      retrievedChunks,
+      liveContext:
+        liveInfo.shouldUseLiveInfo && liveInfo.context ? liveInfo.context : "",
+      fileContext,
+    });
 
     const multimodalPayload = buildMultimodalPrompt(prompt, imagePayload);
     const encoder = new TextEncoder();
@@ -226,7 +221,7 @@ export async function POST(req: Request) {
                 conversationId: conversation,
                 retrievedDocumentTitles: retrievedChunks.map((c) => c.documentTitle),
                 sourcePaths: retrievedChunks.map((c) => c.sourcePath ?? c.source),
-                ragUsed: retrievedChunks.length > 0,
+                ragUsed,
               }) + "\n"
             )
           );
