@@ -10,8 +10,9 @@ import type { AgentDefinition } from "@/lib/agents";
  * call `buildChatPrompt()` with the retrieved chunks and context inputs; it
  * never has to know how the knowledge block is formatted.
  *
- * When the vector backend is wired in a later phase, only the retrieval
- * modules change — this prompt builder (and the route) stay untouched.
+ * Phase 6 — the prompt builder now injects the agent identity, system prompt,
+ * and agent capabilities before the conversation history, so the model always
+ * knows which specialist agent is answering.
  */
 
 /** A single message from the persistent conversation history. */
@@ -48,6 +49,46 @@ export interface ChatPromptResult {
 }
 
 /**
+ * Builds the agent identity + capabilities block.
+ *
+ * This is injected before the conversation history so the model always knows
+ * which specialist agent is answering, what it can do, and which knowledge
+ * sources it prefers.
+ */
+function buildAgentBlock(agent: AgentDefinition): string {
+  const capabilities = agent.enabledTools
+    .map((tool) => {
+      switch (tool) {
+        case "rag":
+          return "Retrieve answers from the Digital Brain India knowledge base";
+        case "live-web":
+          return "Use live web information for current or recent data";
+        case "file-context":
+          return "Read and answer from uploaded files";
+        case "image-analysis":
+          return "Analyze uploaded images";
+        default:
+          return "";
+      }
+    })
+    .filter(Boolean);
+
+  const sections = [
+    `You are ${agent.name} (${agent.icon}) for Digital Brain India.`,
+    agent.systemPrompt,
+    `Your capabilities: ${capabilities.join("; ")}.`,
+  ];
+
+  if (agent.preferredKnowledgeSources.length > 0) {
+    sections.push(
+      `Preferred knowledge sources: ${agent.preferredKnowledgeSources.join(", ")}.`
+    );
+  }
+
+  return sections.join("\n");
+}
+
+/**
  * Builds the RAG-aware system instruction block.
  *
  * When chunks are present, the model is told to answer from the knowledge
@@ -61,7 +102,6 @@ function buildRagInstruction(chunks: RetrievedChunk[]): string {
   const knowledgeBlock = buildKnowledgeContext(chunks);
 
   return [
-    "You are Digital Brain India, an expert assistant for Indian public services, education, healthcare, agriculture, economy, startups, and laws.",
     "Answer using the provided knowledge first.",
     "",
     "Knowledge:",
@@ -92,7 +132,7 @@ function buildHistoryBlock(history: ConversationHistoryMessage[]): string {
  * Builds the final prompt sent to Gemini.
  *
  * The prompt is assembled from (in order):
- *   1. The agent's system role.
+ *   1. The agent identity, system prompt, and capabilities.
  *   2. The RAG knowledge block (only when chunks were retrieved).
  *   3. The live web context (only when relevant).
  *   4. The uploaded file context (only when files exist).
@@ -103,11 +143,12 @@ function buildHistoryBlock(history: ConversationHistoryMessage[]): string {
  */
 export function buildChatPrompt(input: ChatPromptInput): ChatPromptResult {
   const ragUsed = input.retrievedChunks.length > 0;
+  const agentBlock = buildAgentBlock(input.agent);
   const ragInstruction = buildRagInstruction(input.retrievedChunks);
   const historyBlock = buildHistoryBlock(input.conversationHistory ?? []);
 
   const sections: string[] = [
-    `System role: ${input.agent.systemPrompt}`,
+    agentBlock,
     ragInstruction,
     input.liveContext
       ? `Use the live information below when the question requires current or recent data. Include source links in the answer.\n\nLive information:\n${input.liveContext}`

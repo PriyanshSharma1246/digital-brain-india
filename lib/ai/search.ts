@@ -43,6 +43,8 @@ export interface RetrieveOptions {
   topK?: number;
   /** Restrict retrieval to a single category when provided. */
   category?: string;
+  /** Restrict retrieval to a set of categories when provided. */
+  categories?: string[];
 }
 
 /** Result of a retrieval call. */
@@ -82,11 +84,15 @@ export async function findChunksByVector(
   queryEmbedding: number[],
   options: RetrieveOptions = {}
 ): Promise<RetrievedChunk[]> {
-  const { topK = 4, category } = options;
+  const { topK = 4, category, categories } = options;
 
   const where = {
     embedding: { not: Prisma.DbNull },
-    ...(category ? { document: { category } } : {}),
+    ...(category
+      ? { document: { category } }
+      : categories && categories.length > 0
+        ? { document: { category: { in: categories } } }
+        : {}),
   };
 
   const rows = await prisma.knowledgeChunk.findMany({
@@ -143,7 +149,7 @@ export async function findChunksByKeyword(
   query: string,
   options: RetrieveOptions = {}
 ): Promise<RetrievedChunk[]> {
-  const { topK = 4, category } = options;
+  const { topK = 4, category, categories } = options;
 
   // Extract meaningful terms (3+ chars, alphanumeric) from the query.
   const terms = query
@@ -152,7 +158,11 @@ export async function findChunksByKeyword(
     .filter((term) => term.length >= 3);
 
   const where = {
-    ...(category ? { document: { category } } : {}),
+    ...(category
+      ? { document: { category } }
+      : categories && categories.length > 0
+        ? { document: { category: { in: categories } } }
+        : {}),
     ...(terms.length > 0
       ? {
           OR: terms.map((term) => ({
@@ -205,21 +215,25 @@ export async function retrieveChunks(
   query: string,
   options: RetrieveOptions = {}
 ): Promise<RetrieveResult> {
-  const { topK = 4, category } = options;
+  const { topK = 4, category, categories } = options;
 
   try {
     const provider = getEmbeddingProvider();
     const queryEmbedding = await provider.generateEmbedding(query);
 
     if (queryEmbedding) {
-      const chunks = await findChunksByVector(queryEmbedding, { topK, category });
+      const chunks = await findChunksByVector(queryEmbedding, {
+        topK,
+        category,
+        categories,
+      });
       if (chunks.length > 0) {
         return { chunks, usedEmbeddings: true };
       }
       // Vector search returned nothing — fall through to keyword.
     }
 
-    const chunks = await findChunksByKeyword(query, { topK, category });
+    const chunks = await findChunksByKeyword(query, { topK, category, categories });
     return { chunks, usedEmbeddings: false };
   } catch (error) {
     logError("Knowledge search failed", {

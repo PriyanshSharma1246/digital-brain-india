@@ -7,7 +7,7 @@ import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessages from "@/components/chat/ChatMessages";
 import ChatInput from "@/components/chat/ChatInput";
 import AgentSelector from "@/components/chat/AgentSelector";
-import { type AgentId } from "@/lib/agents";
+import { AGENT_DEFINITIONS, type AgentId } from "@/lib/agents";
 import { parseImageAttachment } from "@/lib/multimodal";
 
 type SpeechRecognitionLike = {
@@ -50,6 +50,7 @@ export default function ChatClient({ user }: ChatClientProps) {
   const [imageAttachment, setImageAttachment] = useState<string | null>(null);
   const [recognition, setRecognition] = useState<SpeechRecognitionLike | null>(null);
   const [activeAgent, setActiveAgent] = useState<AgentId>("general");
+  const [routedAgent, setRoutedAgent] = useState<AgentId | null>(null);
   const [conversationAgents, setConversationAgents] = useState<Record<string, AgentId>>(() => {
     if (typeof window === "undefined") return {};
     try {
@@ -71,6 +72,7 @@ export default function ChatClient({ user }: ChatClientProps) {
   useEffect(() => {
     if (activeId) {
       setActiveAgent(conversationAgents[activeId] ?? "general");
+      setRoutedAgent(null);
     }
   }, [activeId, conversationAgents]);
 
@@ -260,6 +262,7 @@ export default function ChatClient({ user }: ChatClientProps) {
 
   function handleAgentChange(nextAgent: AgentId) {
     setActiveAgent(nextAgent);
+    setRoutedAgent(null);
     if (activeId) {
       setConversationAgents((prev) => ({ ...prev, [activeId]: nextAgent }));
     }
@@ -419,6 +422,10 @@ export default function ChatClient({ user }: ChatClientProps) {
             retrievedDocumentTitles?: string[];
             sourcePaths?: string[];
             ragUsed?: boolean;
+            agent?: AgentId;
+            agentName?: string;
+            agentIcon?: string;
+            routed?: boolean;
           };
 
           if (payload.type === "chunk" && typeof payload.text === "string") {
@@ -429,6 +436,19 @@ export default function ChatClient({ user }: ChatClientProps) {
           if (payload.type === "done" && typeof payload.reply === "string") {
             finished = true;
             updateStreamingAssistantMessage(payload.reply);
+
+            // When the server routed the query to a specialist agent, surface
+            // it in the UI so the user can see which agent answered.
+            if (payload.agent && payload.routed) {
+              setRoutedAgent(payload.agent);
+              setActiveAgent(payload.agent);
+              if (currentId) {
+                setConversationAgents((prev) => ({
+                  ...prev,
+                  [currentId]: payload.agent as AgentId,
+                }));
+              }
+            }
           }
 
           if (payload.type === "error" && typeof payload.error === "string") {
@@ -661,9 +681,27 @@ export default function ChatClient({ user }: ChatClientProps) {
               <h1 className="text-lg font-semibold text-slate-200">
                 {activeConversation?.title ?? "AI Chat"}
               </h1>
-              <p className="text-sm text-slate-500">
-                Signed in as {user.name ?? user.email}
-              </p>
+              <div className="flex items-center gap-2">
+                <p className="text-sm text-slate-500">
+                  Signed in as {user.name ?? user.email}
+                </p>
+                {(() => {
+                  const displayAgent = AGENT_DEFINITIONS.find(
+                    (agent) => agent.id === activeAgent
+                  );
+                  return (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-slate-700 bg-slate-900 px-2 py-0.5 text-xs text-slate-300">
+                      <span aria-hidden="true">{displayAgent?.icon ?? "🤖"}</span>
+                      {displayAgent?.name ?? "General Assistant"}
+                      {routedAgent && (
+                        <span className="text-[10px] uppercase tracking-wide text-emerald-400">
+                          auto
+                        </span>
+                      )}
+                    </span>
+                  );
+                })()}
+              </div>
             </div>
 
             <div className="flex-1" />

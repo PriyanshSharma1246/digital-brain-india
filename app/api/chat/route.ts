@@ -13,7 +13,8 @@ import { searchKnowledge } from "@/lib/ai/rag";
 import { buildChatPrompt, type ConversationHistoryMessage } from "@/lib/ai/promptBuilder";
 import type { RetrievedChunk } from "@/lib/ai/search";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
-import { getAgent } from "@/lib/agents";
+import { getAgent, getAgentCategories, type AgentId } from "@/lib/agents";
+import { routeQuery } from "@/lib/aiRouter";
 import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
 import { sanitizeTextInput } from "@/lib/sanitize";
 import { logError } from "@/lib/logger";
@@ -140,12 +141,23 @@ export async function POST(req: Request) {
         ? encodeConversationMeta(conversation, conversationTitle, incomingMessage || "[Image attached]")
         : encodeMessageEntry(conversation, incomingMessage || "[Image attached]");
 
-    const agentDefinition = getAgent(agent);
+    // Phase 6 — Agent routing. When the client does not explicitly override
+    // the agent, the router determines the best agent for this query. The
+    // routed agent then scopes RAG retrieval to its supported categories.
+    const manualAgent = typeof agent === "string" && agent ? (agent as AgentId) : null;
+    const routed = manualAgent ? null : routeQuery(incomingMessage);
+    const activeAgentId: AgentId = manualAgent ?? routed?.agentId ?? "general";
+    const agentDefinition = getAgent(activeAgentId);
+    const agentCategories = getAgentCategories(activeAgentId);
+
     const fileEntries = await getConversationFiles(session.user.id, conversation);
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
       .join("\n\n---\n\n");
-    const searchResult = await searchKnowledge(incomingMessage, { topK: 4 });
+    const searchResult = await searchKnowledge(incomingMessage, {
+      topK: 4,
+      categories: agentCategories,
+    });
     const retrievedChunks: RetrievedChunk[] = searchResult.chunks;
     const liveInfo = await searchLiveWeb(incomingMessage);
     const imagePayload = parseImageAttachment(image);
@@ -296,6 +308,10 @@ export async function POST(req: Request) {
                 retrievedDocumentTitles: retrievedChunks.map((c) => c.documentTitle),
                 sourcePaths: retrievedChunks.map((c) => c.sourcePath ?? c.source),
                 ragUsed,
+                agent: activeAgentId,
+                agentName: agentDefinition.name,
+                agentIcon: agentDefinition.icon,
+                routed: Boolean(routed),
               }) + "\n"
             )
           );
