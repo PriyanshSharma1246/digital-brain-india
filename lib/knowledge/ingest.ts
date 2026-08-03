@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { loadMarkdownFile, loadMarkdownFromDirectory } from "./loader";
 import { splitDocument } from "./splitter";
 import type { ChunkedDocument, ParsedMarkdown } from "./types";
+import { getEmbeddingProvider } from "@/lib/ai/embeddings";
 import { logError, logEvent } from "@/lib/logger";
 
 /**
@@ -10,7 +12,7 @@ import { logError, logEvent } from "@/lib/logger";
  *
  * Pipeline:
  *   Markdown file -> Loader (parse + metadata) -> Splitter (chunks)
- *   -> Prisma (KnowledgeDocument + KnowledgeChunk rows)
+ *   -> Embeddings (Gemini) -> Prisma (KnowledgeDocument + KnowledgeChunk rows)
  *
  * Duplicate avoidance:
  *   - `sourcePath` is unique in the DB. If a document with the same path
@@ -18,8 +20,11 @@ import { logError, logEvent } from "@/lib/logger";
  *   - If the content hash differs, the document and its chunks are replaced
  *     (re-ingested) so the corpus stays in sync with the source files.
  *
- * Embeddings are stored as `null` for now; the embedding provider is wired
- * up in a later phase (see lib/ai/embeddings.ts).
+ * Embeddings:
+ *   - Chunks are embedded in batches using the active EmbeddingProvider.
+ *   - If the provider is unavailable (no API key) or a batch fails, the
+ *     affected chunks are stored with `embedding = null` and keyword search
+ *     remains the fallback.
  */
 
 export interface IngestResult {
@@ -100,6 +105,7 @@ async function ingestParsedDocument(
 /** Creates a new KnowledgeDocument plus its chunks in a single transaction. */
 async function createDocument(parsed: ParsedMarkdown, contentHash: string): Promise<void> {
   const chunked = toChunkedDocument(parsed, contentHash);
+  const embeddings = await embedChunks(chunked.chunks.map((c) => c.content));
 
   await prisma.$transaction(async (tx) => {
     const document = await tx.knowledgeDocument.create({
@@ -113,13 +119,12 @@ async function createDocument(parsed: ParsedMarkdown, contentHash: string): Prom
       },
     });
 
-    // `embedding` is omitted so it defaults to SQL NULL (embeddings are
-    // computed in a later phase).
     await tx.knowledgeChunk.createMany({
-      data: chunked.chunks.map((chunk) => ({
+      data: chunked.chunks.map((chunk, index) => ({
         documentId: document.id,
         content: chunk.content,
         chunkIndex: chunk.index,
+        embedding: embeddings[index] ?? Prisma.DbNull,
       })),
     });
   });
@@ -132,6 +137,7 @@ async function replaceDocument(
   contentHash: string
 ): Promise<void> {
   const chunked = toChunkedDocument(parsed, contentHash);
+  const embeddings = await embedChunks(chunked.chunks.map((c) => c.content));
 
   await prisma.$transaction(async (tx) => {
     await tx.knowledgeDocument.update({
@@ -147,16 +153,30 @@ async function replaceDocument(
 
     // Remove old chunks (cascade-safe) and insert fresh ones.
     await tx.knowledgeChunk.deleteMany({ where: { documentId } });
-    // `embedding` is omitted so it defaults to SQL NULL (embeddings are
-    // computed in a later phase).
     await tx.knowledgeChunk.createMany({
-      data: chunked.chunks.map((chunk) => ({
+      data: chunked.chunks.map((chunk, index) => ({
         documentId,
         content: chunk.content,
         chunkIndex: chunk.index,
+        embedding: embeddings[index] ?? Prisma.DbNull,
       })),
     });
   });
+}
+
+/**
+ * Generates embeddings for a list of chunk texts using the active provider.
+ *
+ * Returns an array aligned with `texts`; entries are `null` when the provider
+ * is unavailable or a batch fails. The caller stores nulls so keyword search
+ * remains the fallback.
+ */
+async function embedChunks(texts: string[]): Promise<(number[] | null)[]> {
+  const provider = getEmbeddingProvider();
+  if (!provider.isAvailable()) {
+    return texts.map(() => null);
+  }
+  return provider.embedBatch(texts);
 }
 
 /** Builds the ChunkedDocument shape from a parsed markdown file. */

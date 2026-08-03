@@ -1,7 +1,9 @@
 import path from "node:path";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ingestDirectory } from "./ingest";
-import { logError } from "@/lib/logger";
+import { getEmbeddingProvider } from "@/lib/ai/embeddings";
+import { logError, logEvent } from "@/lib/logger";
 
 /**
  * Admin service for the Knowledge Management Dashboard.
@@ -176,6 +178,66 @@ export async function safeReIngestKnowledgeBase() {
     return await reIngestKnowledgeBase();
   } catch (error) {
     logError("Knowledge re-ingestion failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+}
+
+/**
+ * Re-indexes existing documents that have chunks without embeddings.
+ *
+ * Finds all chunks where `embedding` is NULL, generates embeddings for them
+ * using the active provider, and updates the rows. Returns the number of
+ * chunks re-indexed. When the provider is unavailable, returns 0.
+ */
+export async function reIndexMissingEmbeddings(): Promise<number> {
+  const provider = getEmbeddingProvider();
+  if (!provider.isAvailable()) {
+    logEvent("warn", "Re-index skipped — embedding provider unavailable");
+    return 0;
+  }
+
+  // Find all chunks with NULL embeddings.
+  const chunks = await prisma.knowledgeChunk.findMany({
+where: { embedding: { equals: Prisma.DbNull } },
+    select: { id: true, content: true },
+  });
+
+  if (chunks.length === 0) {
+    logEvent("info", "Re-index complete — no chunks missing embeddings");
+    return 0;
+  }
+
+  logEvent("info", "Re-indexing chunks without embeddings", {
+    count: chunks.length,
+  });
+
+  // Generate embeddings in batches.
+  const embeddings = await provider.embedBatch(chunks.map((c) => c.content));
+
+  // Update each chunk with its new embedding (skip nulls).
+  let updated = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const embedding = embeddings[i];
+    if (!embedding) continue;
+    await prisma.knowledgeChunk.update({
+      where: { id: chunks[i].id },
+      data: { embedding },
+    });
+    updated++;
+  }
+
+  logEvent("info", "Re-index complete", { updated, total: chunks.length });
+  return updated;
+}
+
+/** Convenience wrapper that logs and rethrows for API error handling. */
+export async function safeReIndexMissingEmbeddings() {
+  try {
+    return await reIndexMissingEmbeddings();
+  } catch (error) {
+    logError("Knowledge re-index failed", {
       error: error instanceof Error ? error.message : String(error),
     });
     throw error;

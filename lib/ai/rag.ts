@@ -1,16 +1,14 @@
 import { loadMarkdownFromDirectory } from "@/lib/knowledge/loader";
 import { splitDocument as splitDocumentIntoChunks } from "@/lib/knowledge/splitter";
 import { ingestDirectory, ingestFile } from "@/lib/knowledge/ingest";
-import { embedText } from "./embeddings";
 import {
-  findChunksByKeyword,
   formatRetrievedChunks,
+  retrieveChunks,
   type RetrievedChunk,
   type RetrieveOptions,
   type RetrieveResult,
 } from "./search";
 import type { Chunk, ParsedMarkdown } from "@/lib/knowledge/types";
-import { logError } from "@/lib/logger";
 
 /**
  * RAG orchestration layer.
@@ -23,9 +21,8 @@ import { logError } from "@/lib/logger";
  *   searchKnowledge()        -> retrieve relevant chunks for a query
  *   retrieveRelevantChunks() -> alias used by the chat pipeline
  *
- * Embeddings are intentionally NOT computed yet (Task 6). The embedding
- * provider is a stub that returns null; search falls back to keyword
- * retrieval until the vector backend is wired in a later phase.
+ * Search uses hybrid retrieval: vector similarity when embeddings are
+ * available, keyword fallback otherwise (see lib/ai/search.ts).
  */
 
 /** Loads and parses every markdown file in the knowledge corpus. */
@@ -54,32 +51,17 @@ export async function storeChunks(document: ParsedMarkdown): Promise<{
 }
 
 /**
- * Retrieves the most relevant chunks for a query.
+ * Retrieves the most relevant chunks for a query using hybrid search.
  *
- * While embeddings are null this performs keyword retrieval; once the
- * embedding provider is wired, this will switch to vector similarity.
+ * Uses vector similarity when embeddings are available; falls back to
+ * keyword search when the embedding provider is unavailable or the vector
+ * path returns no results.
  */
 export async function searchKnowledge(
   query: string,
   options: RetrieveOptions = {}
 ): Promise<RetrieveResult> {
-  const { topK = 4, category } = options;
-
-  try {
-    // Placeholder: embed the query (returns null for now) and fall back to
-    // keyword search. The vector path will be added when embeddings exist.
-    const queryEmbedding = await embedText(query);
-    const usedEmbeddings = queryEmbedding !== null;
-
-    const chunks = await findChunksByKeyword({ topK, category });
-    return { chunks, usedEmbeddings };
-  } catch (error) {
-    logError("Knowledge search failed", {
-      query,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return { chunks: [], usedEmbeddings: false };
-  }
+  return retrieveChunks(query, options);
 }
 
 /** Convenience alias used by the chat pipeline to build prompt context. */

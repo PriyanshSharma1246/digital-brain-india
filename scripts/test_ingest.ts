@@ -14,12 +14,11 @@ async function main() {
   const chunks = await prisma.knowledgeChunk.count();
   console.log(`DB state after first run: docs=${docs}, chunks=${chunks}`);
 
-  // Verify embeddings are null (per Task 6: store embedding as null).
-  // JSON null filters require Prisma.DbNull on nullable Json columns.
+  // Check how many chunks have embeddings (may be 0 if provider unavailable).
   const chunkWithEmbedding = await prisma.knowledgeChunk.findFirst({
     where: { embedding: { not: Prisma.DbNull } },
   });
-  console.log("Chunks with non-null embedding (should be 0):", chunkWithEmbedding ? 1 : 0);
+  console.log("Chunks with non-null embedding:", chunkWithEmbedding ? "yes" : "no");
 
   console.log("=== Second ingestion run (duplicate check) ===");
   const second = await ingestDirectory(corpusRoot);

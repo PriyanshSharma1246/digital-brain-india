@@ -89,6 +89,7 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reingesting, setReingesting] = useState(false);
+  const [reindexing, setReindexing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -181,6 +182,26 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
     }
   }
 
+  /** Re-indexes existing chunks that are missing embeddings. */
+  async function handleReindex() {
+    setReindexing(true);
+    setNotice(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/knowledge?action=reindex", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Re-index failed");
+      }
+      setNotice(`Re-index complete — embedded ${data.reindexed} chunk(s).`);
+      await loadDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Re-index failed");
+    } finally {
+      setReindexing(false);
+    }
+  }
+
   /** Re-ingests the knowledge corpus using the existing ingestion pipeline. */
   async function handleReingest() {
     setReingesting(true);
@@ -246,6 +267,9 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
           <div className="flex flex-wrap items-center gap-3">
             <Button variant="secondary" onClick={() => void handleRefresh()} loading={refreshing}>
               {refreshing ? "Refreshing…" : "↻ Refresh"}
+            </Button>
+            <Button variant="secondary" onClick={() => void handleReindex()} loading={reindexing}>
+              {reindexing ? "Re-indexing…" : "Re-Index Embeddings"}
             </Button>
             <Button onClick={() => void handleReingest()} loading={reingesting}>
               {reingesting ? "Re-ingesting…" : "Re-Ingest Knowledge"}

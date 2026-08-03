@@ -7,7 +7,7 @@ async function main() {
   console.log(`chunks=${result.chunks.length}, usedEmbeddings=${result.usedEmbeddings}`);
 
   for (const chunk of result.chunks) {
-    console.log(`- [${chunk.chunkIndex}] ${chunk.documentTitle} (${chunk.category}) len=${chunk.content.length}`);
+    console.log(`- [${chunk.chunkIndex}] ${chunk.documentTitle} (${chunk.category}) len=${chunk.content.length} score=${chunk.score.toFixed(4)}`);
   }
 
   console.log("\n=== retrieveRelevantChunks() ===");
@@ -23,13 +23,8 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  if (result.usedEmbeddings !== false) {
-    console.error("FAIL: usedEmbeddings should be false while embedding provider is a stub");
-    process.exitCode = 1;
-    return;
-  }
 
-  console.log("\nPASS: search infrastructure works with null embeddings fallback");
+  console.log("\nPASS: search infrastructure works with hybrid retrieval");
 }
 
 main()

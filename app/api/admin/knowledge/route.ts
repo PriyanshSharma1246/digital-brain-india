@@ -5,6 +5,7 @@ import {
   deleteKnowledgeDocument,
   getKnowledgeDashboardStats,
   listKnowledgeDocuments,
+  safeReIndexMissingEmbeddings,
   safeReIngestKnowledgeBase,
 } from "@/lib/knowledge/admin";
 import { logError } from "@/lib/logger";
@@ -14,6 +15,7 @@ import { logError } from "@/lib/logger";
  *
  * GET    /api/admin/knowledge?search=...  -> dashboard stats + document list
  * POST   /api/admin/knowledge             -> re-ingest the knowledge corpus
+ * POST   /api/admin/knowledge/reindex     -> re-index chunks missing embeddings
  * DELETE /api/admin/knowledge?id=...      -> delete one document + its chunks
  *
  * All endpoints require an authenticated session.
@@ -44,13 +46,23 @@ export async function GET(req: Request) {
   }
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
   }
 
   try {
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+
+    // POST /api/admin/knowledge?action=reindex -> re-index chunks missing embeddings
+    if (action === "reindex") {
+      const reindexed = await safeReIndexMissingEmbeddings();
+      return NextResponse.json({ success: true, reindexed });
+    }
+
+    // POST /api/admin/knowledge -> re-ingest the knowledge corpus
     // Reuse the existing ingestion pipeline (lib/knowledge/ingest) — no
     // parsing/splitting logic is duplicated here.
     const result = await safeReIngestKnowledgeBase();
