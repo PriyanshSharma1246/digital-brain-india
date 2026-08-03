@@ -10,13 +10,14 @@ import {
   getConversationFiles,
 } from "@/lib/chatPersistence";
 import { searchKnowledge } from "@/lib/ai/rag";
-import { buildChatPrompt } from "@/lib/ai/promptBuilder";
+import { buildChatPrompt, type ConversationHistoryMessage } from "@/lib/ai/promptBuilder";
 import type { RetrievedChunk } from "@/lib/ai/search";
 import { searchLiveWeb } from "@/lib/liveIntelligence";
 import { getAgent } from "@/lib/agents";
 import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
 import { sanitizeTextInput } from "@/lib/sanitize";
 import { logError } from "@/lib/logger";
+import { addMessage, listMessages } from "@/lib/conversations";
 
 /**
  * Extracts a human-readable error message from a thrown value.
@@ -30,6 +31,47 @@ function extractApiError(error: unknown): string {
     return `Gemini API Error: ${error.message}`;
   }
   return `Gemini API Error: ${String(error)}`;
+}
+
+/**
+ * Loads the most recent conversation history for prompt assembly.
+ *
+ * Uses the Phase 4 conversation service (lib/conversations.ts) to fetch the
+ * latest messages in chronological order. Error messages are excluded, and
+ * only the newest `limit` messages are kept to stay within the model's
+ * context window. If history cannot be loaded, an empty array is returned so
+ * the chat continues normally (per the error-handling requirement).
+ */
+async function loadRecentHistory(
+  userId: string,
+  conversationId: string,
+  limit = 20
+): Promise<ConversationHistoryMessage[]> {
+  try {
+    // Fetch the last page of messages (newest first via offset pagination).
+    // We request a large page size and then slice the newest `limit` messages
+    // to keep the prompt compact.
+    const page = await listMessages(userId, conversationId, {
+      page: 1,
+      pageSize: Math.max(limit, 50),
+    });
+    if (!page) return [];
+
+    return page.messages
+      .filter((message) => !message.isError)
+      .slice(-limit)
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
+  } catch (error) {
+    logError("Failed to load conversation history", {
+      userId,
+      conversationId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
 }
 
 export async function POST(req: Request) {
@@ -108,6 +150,14 @@ export async function POST(req: Request) {
     const liveInfo = await searchLiveWeb(incomingMessage);
     const imagePayload = parseImageAttachment(image);
 
+    // Load recent conversation history (Phase 4). If it fails, the chat
+    // continues normally with an empty history (see loadRecentHistory).
+    const conversationHistory = await loadRecentHistory(
+      session.user.id,
+      conversation,
+      20
+    );
+
     // Prompt assembly is delegated to the prompt builder so the route stays
     // free of retrieval/formatting concerns. When no chunks are found the
     // builder produces a normal chat prompt (RAG block omitted).
@@ -118,6 +168,7 @@ export async function POST(req: Request) {
       liveContext:
         liveInfo.shouldUseLiveInfo && liveInfo.context ? liveInfo.context : "",
       fileContext,
+      conversationHistory,
     });
 
     const multimodalPayload = buildMultimodalPrompt(prompt, imagePayload);
@@ -212,6 +263,29 @@ export async function POST(req: Request) {
               userId: session.user.id,
             },
           });
+
+          // Persist the turn to the Phase 4 conversation memory. The user
+          // message and assistant reply are saved as separate Message rows so
+          // the conversation history can be replayed on future turns. Failures
+          // here are non-fatal — the streamed reply is still delivered.
+          try {
+            await addMessage(
+              session.user.id,
+              conversation,
+              "user",
+              incomingMessage || "[Image attached]"
+            );
+            await addMessage(session.user.id, conversation, "assistant", finalReply);
+          } catch (historyError) {
+            logError("Failed to persist conversation messages", {
+              userId: session.user.id,
+              conversationId: conversation,
+              error:
+                historyError instanceof Error
+                  ? historyError.message
+                  : String(historyError),
+            });
+          }
 
           controller.enqueue(
             encoder.encode(

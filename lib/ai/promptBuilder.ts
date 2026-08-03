@@ -14,6 +14,12 @@ import type { AgentDefinition } from "@/lib/agents";
  * modules change — this prompt builder (and the route) stay untouched.
  */
 
+/** A single message from the persistent conversation history. */
+export interface ConversationHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
 /** Inputs needed to assemble the final prompt sent to Gemini. */
 export interface ChatPromptInput {
   /** The active agent definition (provides the system role). */
@@ -26,6 +32,11 @@ export interface ChatPromptInput {
   liveContext: string;
   /** Uploaded file text context (empty string when no files). */
   fileContext: string;
+  /**
+   * Recent conversation history in chronological order (oldest first).
+   * Error messages are excluded by the caller. Empty when no history exists.
+   */
+  conversationHistory?: ConversationHistoryMessage[];
 }
 
 /** The assembled prompt plus a flag indicating whether RAG context was used. */
@@ -61,6 +72,23 @@ function buildRagInstruction(chunks: RetrievedChunk[]): string {
 }
 
 /**
+ * Formats the recent conversation history into a compact prompt block.
+ *
+ * Messages are rendered oldest-first so the model sees the conversation in
+ * chronological order. Error messages are expected to be filtered out by the
+ * caller before this function is invoked.
+ */
+function buildHistoryBlock(history: ConversationHistoryMessage[]): string {
+  if (history.length === 0) return "";
+
+  const lines = history.map(
+    (message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`
+  );
+
+  return ["Conversation history:", ...lines].join("\n");
+}
+
+/**
  * Builds the final prompt sent to Gemini.
  *
  * The prompt is assembled from (in order):
@@ -68,13 +96,15 @@ function buildRagInstruction(chunks: RetrievedChunk[]): string {
  *   2. The RAG knowledge block (only when chunks were retrieved).
  *   3. The live web context (only when relevant).
  *   4. The uploaded file context (only when files exist).
- *   5. The user question (or an image-analysis instruction).
+ *   5. Recent conversation history (only when available).
+ *   6. The user question (or an image-analysis instruction).
  *
  * Empty sections are filtered out so the prompt stays compact.
  */
 export function buildChatPrompt(input: ChatPromptInput): ChatPromptResult {
   const ragUsed = input.retrievedChunks.length > 0;
   const ragInstruction = buildRagInstruction(input.retrievedChunks);
+  const historyBlock = buildHistoryBlock(input.conversationHistory ?? []);
 
   const sections: string[] = [
     `System role: ${input.agent.systemPrompt}`,
@@ -83,6 +113,7 @@ export function buildChatPrompt(input: ChatPromptInput): ChatPromptResult {
       ? `Use the live information below when the question requires current or recent data. Include source links in the answer.\n\nLive information:\n${input.liveContext}`
       : "",
     input.fileContext ? `Uploaded files:\n${input.fileContext}` : "",
+    historyBlock,
     `User Question: ${input.message || "Please analyze the uploaded image."}`,
   ];
 

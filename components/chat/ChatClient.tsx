@@ -117,12 +117,61 @@ export default function ChatClient({ user }: ChatClientProps) {
     async function loadHistory() {
       setIsRefreshing(true);
       try {
-        const res = await fetch("/api/chat/history");
-        const data: ConversationResponse = await res.json();
-        if (data.conversations?.length) {
-          setConversations(data.conversations);
-          setActiveId(data.conversations[0]?.id ?? null);
+        const res = await fetch("/api/conversations", { cache: "no-store" });
+        const data = await res.json();
+        if (res.ok && data.success && data.conversations?.length > 0) {
+          const apiConversations: Array<{
+            id: string;
+            title: string;
+            createdAt: string;
+            updatedAt: string;
+          }> = data.conversations;
+
+          // Convert API summaries to the client Conversation shape.
+          const mapped: Conversation[] = apiConversations.map((c) => ({
+            id: c.id,
+            title: c.title,
+            messages: [],
+            updatedAt: new Date(c.updatedAt).getTime(),
+            isLocal: false,
+          }));
+
+          // Fetch the first page of messages for the most recent conversation.
+          const first = mapped[0];
+          if (first) {
+            try {
+              const msgRes = await fetch(
+                `/api/conversations/${first.id}/messages?page=1&pageSize=50`,
+                { cache: "no-store" }
+              );
+              const msgData = await msgRes.json();
+              if (msgRes.ok && msgData.success) {
+                first.messages = msgData.messages.map(
+                  (m: {
+                    id: string;
+                    role: string;
+                    content: string;
+                    isError?: boolean;
+                    createdAt: string;
+                  }) => ({
+                    id: m.id,
+                    role: m.role === "assistant" ? "assistant" : "user",
+                    message: m.content,
+                    createdAt: new Date(m.createdAt).getTime(),
+                    ...(m.isError ? { isError: true } : {}),
+                  })
+                );
+              }
+            } catch {
+              // If the messages fetch fails, keep the empty conversation.
+            }
+          }
+
+          setConversations(mapped);
+          setActiveId(mapped[0]?.id ?? null);
         } else {
+          // No persisted conversations yet — create one locally (it will be
+          // persisted to the server on the first send via POST /api/conversations).
           const fresh = createConversation();
           setConversations([fresh]);
           setActiveId(fresh.id);
@@ -177,8 +226,30 @@ export default function ChatClient({ user }: ChatClientProps) {
     setVoiceStatus(null);
   }
 
-  function newConversation() {
-    const fresh = createConversation();
+  async function newConversation() {
+    // Create a persisted conversation via the new Phase 4 API. If it fails,
+    // fall back to a local conversation so the UI remains usable.
+    let fresh = createConversation();
+    try {
+      const res = await fetch("/api/conversations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "New chat" }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        fresh = {
+          id: data.conversation.id,
+          title: data.conversation.title,
+          messages: [],
+          updatedAt: new Date(data.conversation.updatedAt).getTime(),
+          isLocal: false,
+        };
+      }
+    } catch {
+      // Fall back to the local conversation.
+    }
+
     setConversations((prev) => [fresh, ...prev]);
     setActiveId(fresh.id);
     setInput("");
@@ -220,10 +291,8 @@ export default function ChatClient({ user }: ChatClientProps) {
 
   async function deleteConversation(id: string) {
     try {
-      await fetch("/api/chat/conversation/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId: id }),
+      await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+        method: "DELETE",
       });
     } catch {
       // Allow local deletion even if server request fails.
@@ -549,10 +618,10 @@ export default function ChatClient({ user }: ChatClientProps) {
         onDelete={deleteConversation}
         onRename={async (id, title) => {
           try {
-            await fetch("/api/chat/conversation/rename", {
-              method: "POST",
+            await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+              method: "PATCH",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ conversationId: id, title }),
+              body: JSON.stringify({ title }),
             });
           } catch {
             // Ignore failures and still update locally.
