@@ -2,8 +2,17 @@
  * Shared type definitions for the knowledge ingestion pipeline.
  *
  * These types describe the flow:
- *   Markdown file -> ParsedMarkdown (loader/parser) -> split chunks (splitter)
+ *   Source file -> ParsedDocument (loader/parser) -> split chunks (splitter)
  *   -> KnowledgeDocument / KnowledgeChunk records (ingestion service).
+ *
+ * Phase 9 extends the pipeline with:
+ *   - Multi-format import (markdown, pdf, docx, txt, html)
+ *   - Full metadata system (title, description, category, subcategory, state,
+ *     ministry, language, source URL, dates, tags, version, checksum)
+ *   - Enhanced chunking (heading hierarchy, table preservation, configurable
+ *     chunk size / overlap)
+ *   - Rich search filters (category, state, language, ministry, tag, date)
+ *   - Citation metadata (heading, source URL, chunk number, confidence)
  */
 
 /** Supported knowledge categories, mirroring the knowledge/ corpus folders. */
@@ -20,28 +29,80 @@ export const KNOWLEDGE_CATEGORIES = [
 
 export type KnowledgeCategory = (typeof KNOWLEDGE_CATEGORIES)[number];
 
-/** Metadata extracted from a markdown document. */
-export interface MarkdownMetadata {
+/** Supported source file formats. */
+export const KNOWLEDGE_CONTENT_TYPES = [
+  "markdown",
+  "pdf",
+  "docx",
+  "txt",
+  "html",
+] as const;
+
+export type KnowledgeContentType = (typeof KNOWLEDGE_CONTENT_TYPES)[number];
+
+/** Supported languages (ISO 639-1 codes). */
+export const KNOWLEDGE_LANGUAGES = [
+  "en",
+  "hi",
+  "ta",
+  "te",
+  "bn",
+  "mr",
+  "gu",
+  "kn",
+  "ml",
+  "pa",
+] as const;
+
+export type KnowledgeLanguage = (typeof KNOWLEDGE_LANGUAGES)[number];
+
+/** Full metadata extracted from a document (frontmatter, upload form, or file). */
+export interface DocumentMetadata {
   /** Document title. Falls back to the file name when absent. */
   title: string;
+  /** Short summary of the document. */
+  description?: string | null;
   /** Canonical category (e.g. "agriculture"). */
   category: KnowledgeCategory;
+  /** Optional sub-category refinement. */
+  subcategory?: string | null;
+  /** Indian state the document applies to (null when nationwide). */
+  state?: string | null;
+  /** Owning ministry / department. */
+  ministry?: string | null;
+  /** Document language code. */
+  language: KnowledgeLanguage;
   /** Origin/source of the document, e.g. "Ministry of Agriculture". */
   source: string;
+  /** Canonical web URL of the source document. */
+  sourceUrl?: string | null;
+  /** Date the document was published. */
+  publishedAt?: Date | null;
+  /** Tags for filtering and discovery. */
+  tags: string[];
+  /** User-visible document version (e.g. "1.2.0"). */
+  version?: string | null;
 }
 
-/** A markdown file that has been read from disk. */
-export interface ParsedMarkdown {
-  /** Absolute path of the source file. */
-  path: string;
+/** A source file that has been read from disk or uploaded. */
+export interface ParsedDocument {
+  /** Absolute path of the source file (null for in-memory uploads). */
+  path: string | null;
   /** File name (base name with extension). */
   fileName: string;
   /** Raw file contents (before frontmatter stripping). */
   rawContent: string;
   /** Metadata extracted from frontmatter and/or the file name. */
-  metadata: MarkdownMetadata;
-  /** Markdown body with frontmatter removed. */
+  metadata: DocumentMetadata;
+  /** Document body with frontmatter removed. */
   content: string;
+  /** Source format. */
+  contentType: KnowledgeContentType;
+}
+
+/** Backwards-compatible alias for the markdown-only parsed shape. */
+export interface ParsedMarkdown extends ParsedDocument {
+  contentType: "markdown";
 }
 
 /** A single chunk produced by the splitter. */
@@ -50,15 +111,32 @@ export interface Chunk {
   index: number;
   /** Chunk text content. */
   content: string;
+  /** Heading hierarchy leading to this chunk (e.g. ["Overview", "Eligibility"]). */
+  headingPath: string[];
+  /** The immediate heading for this chunk (null for intro text). */
+  heading: string | null;
+  /** True when the chunk contains table content that was kept together. */
+  hasTable: boolean;
 }
 
 /** A chunked document ready for persistence. */
 export interface ChunkedDocument {
   document: {
     title: string;
+    description: string | null;
     category: KnowledgeCategory;
+    subcategory: string | null;
+    state: string | null;
+    ministry: string | null;
+    language: KnowledgeLanguage;
     source: string;
+    sourceUrl: string | null;
+    publishedAt: Date | null;
+    tags: string[];
+    version: string | null;
+    checksum: string;
     content: string;
+    contentType: KnowledgeContentType;
     sourcePath: string | null;
     contentHash: string | null;
   };
@@ -72,4 +150,38 @@ export type EmbeddingVector = number[] | null;
 export interface EmbeddedChunk {
   chunk: Chunk;
   embedding: EmbeddingVector;
+}
+
+/** Filters for rich retrieval (Phase 9). */
+export interface SearchFilters {
+  /** Restrict to a single category. */
+  category?: string;
+  /** Restrict to a set of categories. */
+  categories?: string[];
+  /** Restrict to a single Indian state. */
+  state?: string;
+  /** Restrict to a single language code. */
+  language?: string;
+  /** Restrict to a single ministry. */
+  ministry?: string;
+  /** Restrict to documents containing any of these tags. */
+  tags?: string[];
+  /** Only documents published on or after this date. */
+  publishedAfter?: Date;
+  /** Only documents published on or before this date. */
+  publishedBefore?: Date;
+}
+
+/** A retrieved chunk with full citation metadata (Phase 9). */
+export interface Citation {
+  /** Source document title. */
+  documentTitle: string;
+  /** Heading under which the chunk appears. */
+  heading: string | null;
+  /** Canonical source URL (null when not tracked). */
+  sourceUrl: string | null;
+  /** Zero-based chunk number within the document. */
+  chunkNumber: number;
+  /** Relevance confidence score (0–1). */
+  confidence: number;
 }

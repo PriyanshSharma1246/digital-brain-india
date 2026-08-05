@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getEmbeddingProvider } from "./embeddings";
 import { logError } from "@/lib/logger";
+import type { SearchFilters } from "@/lib/knowledge/types";
 
 /**
  * Search infrastructure for the RAG pipeline.
@@ -11,10 +12,15 @@ import { logError } from "@/lib/logger";
  *   2. Keyword search as a fallback when embeddings are unavailable or the
  *      query embedding fails to generate.
  *
- * The vector path fetches all chunks with non-null embeddings, computes cosine
- * similarity in memory, and returns the top-K. This is appropriate for the
- * current corpus size; a dedicated vector index (pgvector) can be added later
- * without changing the public API.
+ * Phase 9 adds rich filtering:
+ *   - category / categories
+ *   - state
+ *   - language
+ *   - ministry
+ *   - tags
+ *   - published date range
+ *
+ * Every retrieval also records a SearchEvent for analytics.
  */
 
 /** A single retrieved chunk with enough context for an LLM prompt. */
@@ -33,18 +39,22 @@ export interface RetrievedChunk {
   source: string;
   /** Filesystem path of the source markdown file (null when not tracked). */
   sourcePath: string | null;
+  /** Canonical source URL (Phase 9 citation). */
+  sourceUrl: string | null;
+  /** Heading under which the chunk appears (Phase 9 citation). */
+  heading: string | null;
+  /** Heading hierarchy path (Phase 9). */
+  headingPath: string[];
+  /** True when the chunk contains table content. */
+  hasTable: boolean;
   /** Relevance score from the retriever. */
   score: number;
 }
 
 /** Options controlling retrieval breadth. */
-export interface RetrieveOptions {
+export interface RetrieveOptions extends SearchFilters {
   /** Maximum number of chunks to return. Defaults to 4. */
   topK?: number;
-  /** Restrict retrieval to a single category when provided. */
-  category?: string;
-  /** Restrict retrieval to a set of categories when provided. */
-  categories?: string[];
 }
 
 /** Result of a retrieval call. */
@@ -52,6 +62,8 @@ export interface RetrieveResult {
   chunks: RetrievedChunk[];
   /** True when the retriever used embeddings; false when keyword fallback. */
   usedEmbeddings: boolean;
+  /** Retrieval latency in milliseconds. */
+  latencyMs: number;
 }
 
 /**
@@ -73,10 +85,49 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+/** Builds the Prisma where clause from rich search filters. */
+function buildDocumentWhere(filters: SearchFilters): Prisma.KnowledgeDocumentWhereInput {
+  const where: Prisma.KnowledgeDocumentWhereInput = {};
+
+  if (filters.category) {
+    where.category = filters.category;
+  } else if (filters.categories && filters.categories.length > 0) {
+    where.category = { in: filters.categories };
+  }
+
+  if (filters.state) {
+    where.state = filters.state;
+  }
+
+  if (filters.language) {
+    where.language = filters.language;
+  }
+
+  if (filters.ministry) {
+    where.ministry = filters.ministry;
+  }
+
+  if (filters.tags && filters.tags.length > 0) {
+    where.tags = { hasSome: filters.tags };
+  }
+
+  if (filters.publishedAfter || filters.publishedBefore) {
+    where.publishedAt = {};
+    if (filters.publishedAfter) {
+      where.publishedAt.gte = filters.publishedAfter;
+    }
+    if (filters.publishedBefore) {
+      where.publishedAt.lte = filters.publishedBefore;
+    }
+  }
+
+  return where;
+}
+
 /**
  * Performs vector similarity search over chunk embeddings.
  *
- * Fetches all chunks with non-null embeddings (optionally scoped by category),
+ * Fetches all chunks with non-null embeddings (optionally scoped by filters),
  * computes cosine similarity against the query embedding, and returns the
  * top-K most similar chunks sorted by score descending.
  */
@@ -84,15 +135,12 @@ export async function findChunksByVector(
   queryEmbedding: number[],
   options: RetrieveOptions = {}
 ): Promise<RetrievedChunk[]> {
-  const { topK = 4, category, categories } = options;
+  const { topK = 4 } = options;
+  const documentWhere = buildDocumentWhere(options);
 
-  const where = {
+  const where: Prisma.KnowledgeChunkWhereInput = {
     embedding: { not: Prisma.DbNull },
-    ...(category
-      ? { document: { category } }
-      : categories && categories.length > 0
-        ? { document: { category: { in: categories } } }
-        : {}),
+    ...(Object.keys(documentWhere).length > 0 ? { document: documentWhere } : {}),
   };
 
   const rows = await prisma.knowledgeChunk.findMany({
@@ -101,6 +149,9 @@ export async function findChunksByVector(
       id: true,
       content: true,
       chunkIndex: true,
+      heading: true,
+      headingPath: true,
+      hasTable: true,
       embedding: true,
       document: {
         select: {
@@ -108,6 +159,7 @@ export async function findChunksByVector(
           category: true,
           source: true,
           sourcePath: true,
+          sourceUrl: true,
         },
       },
     },
@@ -137,6 +189,10 @@ export async function findChunksByVector(
     category: row.document.category,
     source: row.document.source,
     sourcePath: row.document.sourcePath,
+    sourceUrl: row.document.sourceUrl,
+    heading: row.heading,
+    headingPath: row.headingPath,
+    hasTable: row.hasTable,
     score,
   }));
 }
@@ -149,7 +205,8 @@ export async function findChunksByKeyword(
   query: string,
   options: RetrieveOptions = {}
 ): Promise<RetrievedChunk[]> {
-  const { topK = 4, category, categories } = options;
+  const { topK = 4 } = options;
+  const documentWhere = buildDocumentWhere(options);
 
   // Extract meaningful terms (3+ chars, alphanumeric) from the query.
   const terms = query
@@ -157,12 +214,8 @@ export async function findChunksByKeyword(
     .split(/[^a-z0-9]+/)
     .filter((term) => term.length >= 3);
 
-  const where = {
-    ...(category
-      ? { document: { category } }
-      : categories && categories.length > 0
-        ? { document: { category: { in: categories } } }
-        : {}),
+  const where: Prisma.KnowledgeChunkWhereInput = {
+    ...(Object.keys(documentWhere).length > 0 ? { document: documentWhere } : {}),
     ...(terms.length > 0
       ? {
           OR: terms.map((term) => ({
@@ -178,12 +231,16 @@ export async function findChunksByKeyword(
       id: true,
       content: true,
       chunkIndex: true,
+      heading: true,
+      headingPath: true,
+      hasTable: true,
       document: {
         select: {
           title: true,
           category: true,
           source: true,
           sourcePath: true,
+          sourceUrl: true,
         },
       },
     },
@@ -199,6 +256,10 @@ export async function findChunksByKeyword(
     category: row.document.category,
     source: row.document.source,
     sourcePath: row.document.sourcePath,
+    sourceUrl: row.document.sourceUrl,
+    heading: row.heading,
+    headingPath: row.headingPath,
+    hasTable: row.hasTable,
     score: 0,
   }));
 }
@@ -210,45 +271,101 @@ export async function findChunksByKeyword(
  * 2. If the embedding is available, performs vector similarity search.
  * 3. Falls back to keyword search when the embedding is null or the vector
  *    search returns no results.
+ * 4. Records a SearchEvent for analytics.
  */
 export async function retrieveChunks(
   query: string,
   options: RetrieveOptions = {}
 ): Promise<RetrieveResult> {
-  const { topK = 4, category, categories } = options;
+  const { topK = 4 } = options;
+  const started = performance.now();
 
   try {
     const provider = getEmbeddingProvider();
     const queryEmbedding = await provider.generateEmbedding(query);
 
+    let chunks: RetrievedChunk[] = [];
+    let usedEmbeddings = false;
+
     if (queryEmbedding) {
-      const chunks = await findChunksByVector(queryEmbedding, {
-        topK,
-        category,
-        categories,
-      });
+      chunks = await findChunksByVector(queryEmbedding, options);
       if (chunks.length > 0) {
-        return { chunks, usedEmbeddings: true };
+        usedEmbeddings = true;
       }
-      // Vector search returned nothing — fall through to keyword.
     }
 
-    const chunks = await findChunksByKeyword(query, { topK, category, categories });
-    return { chunks, usedEmbeddings: false };
+    if (chunks.length === 0) {
+      chunks = await findChunksByKeyword(query, options);
+    }
+
+    const latencyMs = Math.round(performance.now() - started);
+
+    // Record analytics event (non-fatal on failure).
+    await recordSearchEvent({
+      query,
+      filters: options,
+      resultCount: chunks.length,
+      usedEmbeddings,
+      latencyMs,
+      success: true,
+    }).catch(() => undefined);
+
+    return { chunks, usedEmbeddings, latencyMs };
   } catch (error) {
     logError("Knowledge search failed", {
       query,
       error: error instanceof Error ? error.message : String(error),
     });
-    return { chunks: [], usedEmbeddings: false };
+
+    const latencyMs = Math.round(performance.now() - started);
+    await recordSearchEvent({
+      query,
+      filters: options,
+      resultCount: 0,
+      usedEmbeddings: false,
+      latencyMs,
+      success: false,
+    }).catch(() => undefined);
+
+    return { chunks: [], usedEmbeddings: false, latencyMs };
   }
 }
 
-/** Formats retrieved chunks into a compact prompt-ready text block. */
+/** Records a search event for analytics (Phase 9). */
+async function recordSearchEvent(input: {
+  query: string;
+  filters: SearchFilters;
+  resultCount: number;
+  usedEmbeddings: boolean;
+  latencyMs: number;
+  success: boolean;
+}): Promise<void> {
+  await prisma.searchEvent.create({
+    data: {
+      query: input.query.slice(0, 500),
+      filters: input.filters as Prisma.InputJsonValue,
+      resultCount: input.resultCount,
+      usedEmbeddings: input.usedEmbeddings,
+      latencyMs: input.latencyMs,
+      success: input.success,
+    },
+  });
+}
+
+/** Formats retrieved chunks into a compact prompt-ready text block with citations. */
 export function formatRetrievedChunks(chunks: RetrievedChunk[]): string {
   return chunks
     .map((chunk, index) => {
-      return `[${index + 1}] Source: ${chunk.source} | ${chunk.documentTitle} (${chunk.category})\n${chunk.content}`;
+      const citation = [
+        `[${index + 1}] Source: ${chunk.source} | ${chunk.documentTitle} (${chunk.category})`,
+        chunk.heading ? `Heading: ${chunk.heading}` : null,
+        chunk.sourceUrl ? `URL: ${chunk.sourceUrl}` : null,
+        `Chunk #${chunk.chunkIndex}`,
+        `Confidence: ${(chunk.score * 100).toFixed(1)}%`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return `${citation}\n${chunk.content}`;
     })
     .join("\n\n---\n\n");
 }

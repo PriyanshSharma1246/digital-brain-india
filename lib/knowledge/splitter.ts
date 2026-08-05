@@ -10,29 +10,43 @@ export interface SplitOptions {
   overlap?: number;
   /** When true (default), chunk boundaries prefer paragraph boundaries. */
   preserveParagraphs?: boolean;
+  /** When true (default), markdown headings are preserved as heading metadata. */
+  preserveHeadings?: boolean;
+  /** When true (default), markdown tables are kept together in a single chunk. */
+  keepTablesTogether?: boolean;
 }
 
 const DEFAULT_CHUNK_SIZE = 500;
 const DEFAULT_OVERLAP = 100;
 
 /**
- * Splits a document into size-bounded chunks while preserving paragraph
- * structure where possible.
+ * Splits a document into size-bounded chunks while preserving:
+ *   - Paragraph structure (when preserveParagraphs is true)
+ *   - Markdown heading hierarchy (when preserveHeadings is true)
+ *   - Markdown tables (when keepTablesTogether is true)
  *
  * Algorithm:
  *   1. Normalize whitespace (collapse runs of blank lines).
  *   2. Split into paragraph units (lines separated by blank lines).
- *   3. Break any paragraph longer than `chunkSize` into sub-units sized
+ *   3. Track the current heading hierarchy as headings are encountered.
+ *   4. Keep markdown tables together as a single unit.
+ *   5. Break any paragraph longer than `chunkSize` into sub-units sized
  *      `chunkSize` with `overlap`.
- *   4. Greedily merge consecutive units into chunks up to `chunkSize`.
- *   5. Carry the tail of the previous chunk into the next one as overlap.
+ *   6. Greedily merge consecutive units into chunks up to `chunkSize`.
+ *   7. Carry the tail of the previous chunk into the next one as overlap.
  *
  * Fully typed, side-effect free, and reusable by any ingestion pipeline.
  *
  * @returns An array of Chunk rows (never null; empty for blank input).
  */
 export function splitDocument(content: string, options: SplitOptions = {}): Chunk[] {
-  const { chunkSize, overlap, preserveParagraphs = true } = options;
+  const {
+    chunkSize,
+    overlap,
+    preserveParagraphs = true,
+    preserveHeadings = true,
+    keepTablesTogether = true,
+  } = options;
 
   const safeChunkSize = resolveChunkSize(chunkSize);
   const safeOverlap = resolveOverlap(overlap, safeChunkSize);
@@ -44,7 +58,11 @@ export function splitDocument(content: string, options: SplitOptions = {}): Chun
   const units = preserveParagraphs ? splitParagraphs(normalized) : [normalized];
   const boundedUnits = units.flatMap((unit) => boundUnit(unit, safeChunkSize, safeOverlap));
 
-  return mergeUnits(boundedUnits, safeChunkSize, safeOverlap);
+  // Build chunks with heading hierarchy tracking.
+  return buildChunks(boundedUnits, safeChunkSize, safeOverlap, {
+    preserveHeadings,
+    keepTablesTogether,
+  });
 }
 
 /** Fall back to defaults when chunkSize is invalid (<= 0 or not finite). */
@@ -121,22 +139,115 @@ function splitLongText(text: string, chunkSize: number, overlap: number): string
   return parts;
 }
 
+/** Options for the chunk-building phase. */
+interface BuildChunkOptions {
+  preserveHeadings: boolean;
+  keepTablesTogether: boolean;
+}
+
+/** Heading detection result. */
+interface HeadingInfo {
+  /** Full heading hierarchy path. */
+  path: string[];
+  /** The immediate heading text. */
+  heading: string;
+}
+
 /**
- * Greedily merges paragraph units into chunks no larger than chunkSize and
- * injects `overlap` characters from the end of each chunk into the next.
+ * Detects a markdown heading line and returns its hierarchy.
+ * Returns null when the unit is not a heading.
  */
-function mergeUnits(units: string[], chunkSize: number, overlap: number): Chunk[] {
+function detectHeading(unit: string): HeadingInfo | null {
+  const match = unit.match(/^(#{1,6})\s+(.+)$/);
+  if (!match) return null;
+  const level = match[1].length;
+  const heading = match[2].trim();
+  return { path: [heading], heading };
+}
+
+/**
+ * Detects whether a unit looks like a markdown table.
+ * A table has a header row, a separator row of dashes, and at least one body row.
+ */
+function looksLikeTable(unit: string): boolean {
+  const lines = unit.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (lines.length < 3) return false;
+  // The second line must be a separator row like | --- | --- |
+  const separator = lines[1];
+  if (!separator.startsWith("|") && !separator.startsWith("|-")) return false;
+  return /^\|?[\s:|-]+\|?$/.test(separator) && separator.includes("-");
+}
+
+/**
+ * Greedily merges paragraph units into chunks no larger than chunkSize,
+ * tracking heading hierarchy and table boundaries as it goes.
+ */
+function buildChunks(
+  units: string[],
+  chunkSize: number,
+  overlap: number,
+  options: BuildChunkOptions
+): Chunk[] {
   const chunks: Chunk[] = [];
   let current: string[] = [];
   let currentLength = 0;
+  let currentHeadingPath: string[] = [];
+  let currentHeading: string | null = null;
+  let currentHasTable = false;
 
-  const pushChunk = (text: string) => {
+  const pushChunk = (
+    text: string,
+    headingPath: string[],
+    heading: string | null,
+    hasTable: boolean
+  ) => {
     const clean = text.trim();
     if (!clean) return;
-    chunks.push({ index: chunks.length, content: clean });
+    chunks.push({
+      index: chunks.length,
+      content: clean,
+      headingPath,
+      heading,
+      hasTable,
+    });
   };
 
   for (const unit of units) {
+    // Detect heading lines and update the hierarchy.
+    const headingInfo = options.preserveHeadings ? detectHeading(unit) : null;
+    if (headingInfo) {
+      // Flush the current chunk before starting a new heading section.
+      if (current.length > 0) {
+        const merged = mergeUnitsText(current);
+        if (merged) pushChunk(merged, currentHeadingPath, currentHeading, currentHasTable);
+        current = [];
+        currentLength = 0;
+        currentHasTable = false;
+      }
+      currentHeadingPath = headingInfo.path;
+      currentHeading = headingInfo.heading;
+      continue;
+    }
+
+    // Detect tables and keep them together when requested.
+    const isTable = options.keepTablesTogether && looksLikeTable(unit);
+    if (isTable) {
+      // Flush the current chunk so the table stays together.
+      if (current.length > 0) {
+        const merged = mergeUnitsText(current);
+        if (merged) pushChunk(merged, currentHeadingPath, currentHeading, currentHasTable);
+        current = [];
+        currentLength = 0;
+      }
+      // If the table fits in a chunk, emit it as its own chunk.
+      if (unit.length <= chunkSize) {
+        pushChunk(unit, currentHeadingPath, currentHeading, true);
+        continue;
+      }
+      // Oversized table: fall through to normal merging with hasTable=true.
+      currentHasTable = true;
+    }
+
     const separatorLength = current.length > 0 ? 2 : 0; // "\n\n"
     const nextLength = currentLength + separatorLength + unit.length;
 
@@ -148,16 +259,18 @@ function mergeUnits(units: string[], chunkSize: number, overlap: number): Chunk[
 
     // Flush the accumulated unit(s) as a chunk.
     const merged = mergeUnitsText(current);
-    if (merged) pushChunk(merged);
+    if (merged) pushChunk(merged, currentHeadingPath, currentHeading, currentHasTable);
 
     // Start the next chunk; carry the tail overlap, if any.
     current = overlap > 0 && merged ? [overlapTail(merged, overlap), unit] : [unit];
-    currentLength = current.reduce((sum, part) => sum + part.length, 0) + (current.length - 1) * 2;
+    currentLength =
+      current.reduce((sum, part) => sum + part.length, 0) + (current.length - 1) * 2;
+    currentHasTable = isTable;
   }
 
   if (current.length > 0) {
     const merged = mergeUnitsText(current);
-    if (merged) pushChunk(merged);
+    if (merged) pushChunk(merged, currentHeadingPath, currentHeading, currentHasTable);
   }
 
   return chunks;

@@ -3,7 +3,9 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
   deleteKnowledgeDocument,
+  getKnowledgeAnalytics,
   getKnowledgeDashboardStats,
+  getKnowledgeQualitySummary,
   listKnowledgeDocuments,
   safeReIndexMissingEmbeddings,
   safeReIngestKnowledgeBase,
@@ -14,8 +16,10 @@ import { logError } from "@/lib/logger";
  * Admin Knowledge Management API.
  *
  * GET    /api/admin/knowledge?search=...  -> dashboard stats + document list
+ * GET    /api/admin/knowledge?view=analytics -> analytics dashboard
+ * GET    /api/admin/knowledge?view=quality   -> quality check summary
  * POST   /api/admin/knowledge             -> re-ingest the knowledge corpus
- * POST   /api/admin/knowledge/reindex     -> re-index chunks missing embeddings
+ * POST   /api/admin/knowledge?action=reindex -> re-index chunks missing embeddings
  * DELETE /api/admin/knowledge?id=...      -> delete one document + its chunks
  *
  * All endpoints require an authenticated session.
@@ -30,6 +34,19 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get("search") ?? "";
+    const view = searchParams.get("view");
+
+    // GET /api/admin/knowledge?view=analytics -> analytics dashboard
+    if (view === "analytics") {
+      const analytics = await getKnowledgeAnalytics();
+      return NextResponse.json({ success: true, analytics });
+    }
+
+    // GET /api/admin/knowledge?view=quality -> quality check summary
+    if (view === "quality") {
+      const quality = await getKnowledgeQualitySummary();
+      return NextResponse.json({ success: true, quality });
+    }
 
     const [stats, documents] = await Promise.all([
       getKnowledgeDashboardStats(),

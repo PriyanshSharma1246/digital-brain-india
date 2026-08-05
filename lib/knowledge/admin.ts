@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { ingestDirectory } from "./ingest";
 import { getEmbeddingProvider } from "@/lib/ai/embeddings";
 import { logError, logEvent } from "@/lib/logger";
+import { getAnalyticsDashboard } from "./analytics";
+import { getQualitySummary } from "./quality";
 
 /**
  * Admin service for the Knowledge Management Dashboard.
@@ -11,6 +13,13 @@ import { logError, logEvent } from "@/lib/logger";
  * These functions power the /admin/knowledge route and its API endpoints.
  * They intentionally reuse the existing ingestion pipeline (lib/knowledge/ingest)
  * rather than duplicating any parsing/splitting/persistence logic.
+ *
+ * Phase 9 extends the dashboard with:
+ *   - Full metadata (description, subcategory, state, ministry, language,
+ *     source URL, published date, tags, version, checksum)
+ *   - Document version history
+ *   - Analytics (search, latency, embedding coverage, category distribution)
+ *   - Quality check summary
  */
 
 /** Absolute path of the markdown corpus directory. */
@@ -20,13 +29,25 @@ export const KNOWLEDGE_CORPUS_DIR = path.join(process.cwd(), "knowledge");
 export interface KnowledgeDocumentSummary {
   id: string;
   title: string;
+  description: string | null;
   category: string;
+  subcategory: string | null;
+  state: string | null;
+  ministry: string | null;
+  language: string;
   source: string;
+  sourceUrl: string | null;
+  publishedAt: Date | null;
+  tags: string[];
+  version: string | null;
+  checksum: string | null;
+  contentType: string;
   sourcePath: string | null;
   contentHash: string | null;
   chunkCount: number;
   createdAt: Date;
   updatedAt: Date;
+  ingestedAt: Date;
 }
 
 /** Dashboard aggregate stats. */
@@ -41,7 +62,18 @@ export interface KnowledgeChunkDetail {
   id: string;
   chunkIndex: number;
   content: string;
+  heading: string | null;
+  headingPath: string[];
+  hasTable: boolean;
   length: number;
+  createdAt: Date;
+}
+
+/** A document version snapshot. */
+export interface DocumentVersionDetail {
+  id: string;
+  version: string;
+  checksum: string;
   createdAt: Date;
 }
 
@@ -49,14 +81,27 @@ export interface KnowledgeChunkDetail {
 export interface KnowledgeDocumentDetail {
   id: string;
   title: string;
+  description: string | null;
   category: string;
+  subcategory: string | null;
+  state: string | null;
+  ministry: string | null;
+  language: string;
   source: string;
+  sourceUrl: string | null;
+  publishedAt: Date | null;
+  tags: string[];
+  version: string | null;
+  checksum: string | null;
+  contentType: string;
   content: string;
   sourcePath: string | null;
   contentHash: string | null;
   createdAt: Date;
   updatedAt: Date;
+  ingestedAt: Date;
   chunks: KnowledgeChunkDetail[];
+  versions: DocumentVersionDetail[];
 }
 
 /**
@@ -70,6 +115,8 @@ export async function listKnowledgeDocuments(search = ""): Promise<KnowledgeDocu
           { title: { contains: search.trim(), mode: "insensitive" as const } },
           { category: { contains: search.trim(), mode: "insensitive" as const } },
           { sourcePath: { contains: search.trim(), mode: "insensitive" as const } },
+          { ministry: { contains: search.trim(), mode: "insensitive" as const } },
+          { state: { contains: search.trim(), mode: "insensitive" as const } },
         ],
       }
     : {};
@@ -85,13 +132,25 @@ export async function listKnowledgeDocuments(search = ""): Promise<KnowledgeDocu
   return documents.map((doc) => ({
     id: doc.id,
     title: doc.title,
+    description: doc.description,
     category: doc.category,
+    subcategory: doc.subcategory,
+    state: doc.state,
+    ministry: doc.ministry,
+    language: doc.language,
     source: doc.source,
+    sourceUrl: doc.sourceUrl,
+    publishedAt: doc.publishedAt,
+    tags: doc.tags,
+    version: doc.version,
+    checksum: doc.checksum,
+    contentType: doc.contentType,
     sourcePath: doc.sourcePath,
     contentHash: doc.contentHash,
     chunkCount: doc._count.chunks,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    ingestedAt: doc.ingestedAt,
   }));
 }
 
@@ -113,13 +172,17 @@ export async function getKnowledgeDashboardStats(): Promise<KnowledgeDashboardSt
   };
 }
 
-/** Fetches a single document with its ordered chunks for the detail view. */
+/** Fetches a single document with its ordered chunks and version history. */
 export async function getKnowledgeDocumentDetail(id: string): Promise<KnowledgeDocumentDetail | null> {
   const document = await prisma.knowledgeDocument.findUnique({
     where: { id },
     include: {
       chunks: {
         orderBy: { chunkIndex: "asc" },
+      },
+      versions: {
+        orderBy: { createdAt: "desc" },
+        take: 20,
       },
     },
   });
@@ -129,19 +192,40 @@ export async function getKnowledgeDocumentDetail(id: string): Promise<KnowledgeD
   return {
     id: document.id,
     title: document.title,
+    description: document.description,
     category: document.category,
+    subcategory: document.subcategory,
+    state: document.state,
+    ministry: document.ministry,
+    language: document.language,
     source: document.source,
+    sourceUrl: document.sourceUrl,
+    publishedAt: document.publishedAt,
+    tags: document.tags,
+    version: document.version,
+    checksum: document.checksum,
+    contentType: document.contentType,
     content: document.content,
     sourcePath: document.sourcePath,
     contentHash: document.contentHash,
     createdAt: document.createdAt,
     updatedAt: document.updatedAt,
+    ingestedAt: document.ingestedAt,
     chunks: document.chunks.map((chunk) => ({
       id: chunk.id,
       chunkIndex: chunk.chunkIndex,
       content: chunk.content,
+      heading: chunk.heading,
+      headingPath: chunk.headingPath,
+      hasTable: chunk.hasTable,
       length: chunk.content.length,
       createdAt: chunk.createdAt,
+    })),
+    versions: document.versions.map((version) => ({
+      id: version.id,
+      version: version.version,
+      checksum: version.checksum,
+      createdAt: version.createdAt,
     })),
   };
 }
@@ -157,6 +241,8 @@ export async function getKnowledgeDocumentDetail(id: string): Promise<KnowledgeD
 export async function deleteKnowledgeDocument(id: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.knowledgeChunk.deleteMany({ where: { documentId: id } });
+    await tx.documentVersion.deleteMany({ where: { documentId: id } });
+    await tx.qualityCheckResult.deleteMany({ where: { documentId: id } });
     await tx.knowledgeDocument.delete({ where: { id } });
   });
 }
@@ -200,7 +286,7 @@ export async function reIndexMissingEmbeddings(): Promise<number> {
 
   // Find all chunks with NULL embeddings.
   const chunks = await prisma.knowledgeChunk.findMany({
-where: { embedding: { equals: Prisma.DbNull } },
+    where: { embedding: { equals: Prisma.DbNull } },
     select: { id: true, content: true },
   });
 
@@ -242,4 +328,14 @@ export async function safeReIndexMissingEmbeddings() {
     });
     throw error;
   }
+}
+
+/** Fetches the analytics dashboard payload. */
+export async function getKnowledgeAnalytics() {
+  return getAnalyticsDashboard();
+}
+
+/** Fetches the quality check summary. */
+export async function getKnowledgeQualitySummary() {
+  return getQualitySummary();
 }

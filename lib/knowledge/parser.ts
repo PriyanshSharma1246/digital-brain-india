@@ -1,9 +1,12 @@
 import path from "node:path";
 import {
   KNOWLEDGE_CATEGORIES,
+  KNOWLEDGE_LANGUAGES,
+  type DocumentMetadata,
   type KnowledgeCategory,
-  type MarkdownMetadata,
-  type ParsedMarkdown,
+  type KnowledgeContentType,
+  type KnowledgeLanguage,
+  type ParsedDocument,
 } from "./types";
 import { logError } from "@/lib/logger";
 
@@ -11,24 +14,28 @@ const DEFAULT_SOURCE = "India Digital Brain Knowledge Base";
 const FRONTMATTER_DELIMITER = "---";
 
 /**
- * Parses a markdown file into a structured ParsedMarkdown object.
+ * Parses a source file into a structured ParsedDocument object.
  *
  * Supported frontmatter fields (simple `key: value` lines):
- *   title:    Document title
- *   category: One of KNOWLEDGE_CATEGORIES
- *   source:   Origin of the document
+ *   title, description, category, subcategory, state, ministry, language,
+ *   source, source_url, published_at, tags, version
  *
  * Missing fields fall back to:
  *   title    -> file base name
  *   category -> parent folder name (if it matches a known category)
  *   source   -> DEFAULT_SOURCE
+ *   language -> "en"
+ *   tags     -> []
  */
-export function parseMarkdown(options: {
-  path: string;
+
+/** Parses a document from raw content with full metadata extraction. */
+export function parseDocument(options: {
+  path: string | null;
   fileName: string;
   rawContent: string;
-}): ParsedMarkdown {
-  const { path: filePath, fileName, rawContent } = options;
+  contentType: KnowledgeContentType;
+}): ParsedDocument {
+  const { path: filePath, fileName, rawContent, contentType } = options;
 
   // --- Split frontmatter from the body ------------------------------------
   const { frontmatter, body } = extractFrontmatter(rawContent);
@@ -37,8 +44,24 @@ export function parseMarkdown(options: {
   const category = resolveCategory(frontmatter.category, filePath);
   const title = cleanValue(frontmatter.title) || titleFromFileName(fileName);
   const source = cleanValue(frontmatter.source) || DEFAULT_SOURCE;
+  const language = resolveLanguage(frontmatter.language);
+  const tags = parseTags(frontmatter.tags);
+  const publishedAt = parseDate(frontmatter.published_at) ?? parseDate(frontmatter.publishedAt);
 
-  const metadata: MarkdownMetadata = { title, category, source };
+  const metadata: DocumentMetadata = {
+    title,
+    description: cleanValue(frontmatter.description) || null,
+    category,
+    subcategory: cleanValue(frontmatter.subcategory) || null,
+    state: cleanValue(frontmatter.state) || null,
+    ministry: cleanValue(frontmatter.ministry) || null,
+    language,
+    source,
+    sourceUrl: cleanValue(frontmatter.source_url) ?? cleanValue(frontmatter.sourceUrl) ?? null,
+    publishedAt,
+    tags,
+    version: cleanValue(frontmatter.version) || null,
+  };
 
   return {
     path: filePath,
@@ -46,10 +69,25 @@ export function parseMarkdown(options: {
     rawContent,
     metadata,
     content: body,
+    contentType,
   };
 }
 
-/** Splits raw markdown into an optional frontmatter block and the body. */
+/** Backwards-compatible wrapper for markdown-only parsing. */
+export function parseMarkdown(options: {
+  path: string;
+  fileName: string;
+  rawContent: string;
+}): ParsedDocument {
+  return parseDocument({
+    path: options.path,
+    fileName: options.fileName,
+    rawContent: options.rawContent,
+    contentType: "markdown",
+  });
+}
+
+/** Splits raw content into an optional frontmatter block and the body. */
 function extractFrontmatter(raw: string): {
   frontmatter: Record<string, string>;
   body: string;
@@ -82,18 +120,19 @@ function extractFrontmatter(raw: string): {
 }
 
 /** Infers the category from frontmatter, else from the containing folder. */
-function resolveCategory(raw: string | undefined, filePath: string): KnowledgeCategory {
+function resolveCategory(raw: string | undefined, filePath: string | null): KnowledgeCategory {
   const fromFrontmatter = normalizeCategory(raw);
   if (fromFrontmatter) return fromFrontmatter;
 
-  const folderName = containingFolder(filePath);
-  const fromFolder = normalizeCategory(folderName);
-  if (fromFolder) return fromFolder;
+  if (filePath) {
+    const folderName = containingFolder(filePath);
+    const fromFolder = normalizeCategory(folderName);
+    if (fromFolder) return fromFolder;
+  }
 
   logError("Knowledge document has an unknown category", {
     path: filePath,
     rawCategory: raw ?? null,
-    folder: folderName,
   });
   return "governance";
 }
@@ -106,6 +145,32 @@ function normalizeCategory(value: string | undefined): KnowledgeCategory | null 
     return normalized as KnowledgeCategory;
   }
   return null;
+}
+
+/** Resolves a language code, defaulting to "en" for unknown values. */
+function resolveLanguage(raw: string | undefined): KnowledgeLanguage {
+  if (!raw) return "en";
+  const normalized = raw.trim().toLowerCase();
+  if (KNOWLEDGE_LANGUAGES.includes(normalized as KnowledgeLanguage)) {
+    return normalized as KnowledgeLanguage;
+  }
+  return "en";
+}
+
+/** Parses a comma-separated tag list into a clean string array. */
+function parseTags(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+/** Parses a date string into a Date, or null when invalid. */
+function parseDate(raw: string | undefined): Date | null {
+  if (!raw) return null;
+  const date = new Date(raw.trim());
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function cleanValue(value: string | undefined): string {

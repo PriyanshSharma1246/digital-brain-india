@@ -1,4 +1,4 @@
-import { loadMarkdownFromDirectory } from "@/lib/knowledge/loader";
+import { loadKnowledgeFromDirectory } from "@/lib/knowledge/loader";
 import { splitDocument as splitDocumentIntoChunks } from "@/lib/knowledge/splitter";
 import { ingestDirectory, ingestFile } from "@/lib/knowledge/ingest";
 import {
@@ -8,14 +8,14 @@ import {
   type RetrieveOptions,
   type RetrieveResult,
 } from "./search";
-import type { Chunk, ParsedMarkdown } from "@/lib/knowledge/types";
+import type { Chunk, ParsedDocument } from "@/lib/knowledge/types";
 
 /**
  * RAG orchestration layer.
  *
  * This module exposes the high-level pipeline used by the rest of the app:
  *
- *   loadKnowledge()          -> scan + parse the markdown corpus
+ *   loadKnowledge()          -> scan + parse the knowledge corpus
  *   splitDocument()          -> chunk a parsed document
  *   storeChunks()            -> persist document + chunks (dedupe-aware)
  *   searchKnowledge()        -> retrieve relevant chunks for a query
@@ -25,13 +25,13 @@ import type { Chunk, ParsedMarkdown } from "@/lib/knowledge/types";
  * available, keyword fallback otherwise (see lib/ai/search.ts).
  */
 
-/** Loads and parses every markdown file in the knowledge corpus. */
-export async function loadKnowledge(rootDir: string): Promise<ParsedMarkdown[]> {
-  return loadMarkdownFromDirectory(rootDir);
+/** Loads and parses every supported file in the knowledge corpus. */
+export async function loadKnowledge(rootDir: string): Promise<ParsedDocument[]> {
+  return loadKnowledgeFromDirectory(rootDir);
 }
 
 /** Splits a parsed document into bounded, paragraph-preserving chunks. */
-export function splitDocument(document: ParsedMarkdown): Chunk[] {
+export function splitDocument(document: ParsedDocument): Chunk[] {
   return splitDocumentIntoChunks(document.content);
 }
 
@@ -39,7 +39,7 @@ export function splitDocument(document: ParsedMarkdown): Chunk[] {
  * Persists a parsed document and its chunks, avoiding duplicate imports.
  * Returns a summary of what happened (created/updated/skipped/failed).
  */
-export async function storeChunks(document: ParsedMarkdown): Promise<{
+export async function storeChunks(document: ParsedDocument): Promise<{
   created: number;
   updated: number;
   skipped: number;
@@ -47,6 +47,9 @@ export async function storeChunks(document: ParsedMarkdown): Promise<{
 }> {
   // The ingestion service owns the dedupe + transaction logic. We delegate
   // to it so the RAG layer stays a thin orchestrator.
+  if (!document.path) {
+    return { created: 0, updated: 0, skipped: 0, failed: 1 };
+  }
   return ingestFile(document.path);
 }
 

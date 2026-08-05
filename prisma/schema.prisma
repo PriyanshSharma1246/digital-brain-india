@@ -60,38 +60,199 @@ model KnowledgeEntry {
   category  String
   source    String
   tags      String[]
-  fileName  String?  
+  fileName  String?
   fileType  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 /// A government document ingested into the RAG knowledge engine.
+///
+/// Phase 9 extends the document with a full metadata system:
+/// description, subcategory, state, ministry, language, source URL,
+/// published/updated dates, tags, version, checksum, and ingestion timestamp.
 model KnowledgeDocument {
-  id          String             @id @default(cuid())
+  id          String   @id @default(cuid())
   title       String
+  /// Short summary of the document.
+  description String?
   category    String
+  /// Optional sub-category refinement (e.g. "crop-insurance" under "agriculture").
+  subcategory String?
+  /// Indian state the document applies to (null when nationwide).
+  state       String?
+  /// Owning ministry / department (e.g. "Ministry of Agriculture").
+  ministry    String?
+  /// Document language code (e.g. "en", "hi", "ta").
+  language    String   @default("en")
   source      String
+  /// Canonical web URL of the source document.
+  sourceUrl   String?
+  /// Date the document was published (from frontmatter or upload metadata).
+  publishedAt DateTime?
+  updatedAt   DateTime @updatedAt
+  tags        String[]
+  /// User-visible document version (e.g. "1.2.0").
+  version     String?
+  /// SHA-256 checksum of the raw content (duplicate detection).
+  checksum    String?  @unique
   content     String
-  /// Filesystem path of the source markdown file (used to avoid duplicate imports).
-  sourcePath  String?            @unique
-  /// Hash of the raw content used to detect content changes on re-scan.
+  /// Source format: "markdown" | "pdf" | "docx" | "txt" | "html".
+  contentType String   @default("markdown")
+  /// Filesystem path of the source file (used to avoid duplicate imports).
+  sourcePath  String?  @unique
+  /// Backwards-compatible hash of the raw content (legacy duplicate detection).
   contentHash String?
-  createdAt   DateTime           @default(now())
-  /// Last time the document was created or re-ingested.
-  updatedAt   DateTime           @updatedAt
+  createdAt   DateTime @default(now())
+  /// Timestamp of the latest ingestion that produced this document.
+  ingestedAt  DateTime @default(now())
   chunks      KnowledgeChunk[]
+  versions    DocumentVersion[]
+  qualityChecks QualityCheckResult[]
+  jobLinks    IngestionJobDocument[]
+
+  @@index([category])
+  @@index([state])
+  @@index([ministry])
+  @@index([language])
+  @@index([updatedAt])
+  @@index([checksum])
 }
 
 /// A fixed-size chunk of a KnowledgeDocument ready for embedding and retrieval.
+///
+/// Phase 9 adds heading hierarchy, table preservation hints, and is built by
+/// the enhanced splitter (lib/knowledge/splitter.ts).
 model KnowledgeChunk {
-  id         String             @id @default(cuid())
+  id         String            @id @default(cuid())
   documentId String
   content    String
   /// Zero-based position of the chunk within its document (preserves order).
   chunkIndex Int
+  /// Heading hierarchy leading to this chunk (e.g. ["Overview", "Eligibility"]).
+  headingPath String[]
+  /// The immediate heading for this chunk (null for intro text).
+  heading    String?
+  /// True when the chunk contains table content that was kept together.
+  hasTable   Boolean           @default(false)
   /// Vector embedding. Kept nullable until the embedding provider is wired up.
   embedding  Json?
+  createdAt  DateTime          @default(now())
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, chunkIndex])
+}
+
+/// A historical snapshot of a document's content + metadata (Phase 9).
+///
+/// Created when a document is created or re-ingested with a content change.
+/// The full metadata payload is stored as JSON so old versions stay intact.
+model DocumentVersion {
+  id         String            @id @default(cuid())
+  documentId String
+  /// Version label at the time of the snapshot (falls back to a timestamp).
+  version    String
+  /// SHA-256 checksum of the raw content at this version.
+  checksum   String
+  /// Full body content of the document at this version.
+  content    String
+  /// Metadata snapshot (title, category, tags, sourceUrl, ...) as JSON.
+  metadata   Json
+  createdAt  DateTime          @default(now())
+  document   KnowledgeDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, createdAt])
+}
+
+/// A queued ingestion job with progress tracking (Phase 9).
+///
+/// `type` is one of: "bulk" | "upload" | "reindex" | "reingest".
+/// `status` is one of: "queued" | "running" | "completed" | "failed".
+model IngestionJob {
+  id             String               @id @default(cuid())
+  type           String
+  status         String               @default("queued")
+  /// 0–100 overall completion percentage.
+  progress       Int                  @default(0)
+  totalItems     Int                  @default(0)
+  processedItems Int                  @default(0)
+  succeededItems Int                  @default(0)
+  failedItems    Int                  @default(0)
+  error          String?
+  createdAt      DateTime             @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  logs           IngestionLog[]
+  documents      IngestionJobDocument[]
+
+  @@index([status, createdAt])
+}
+
+/// A single document within an ingestion job with per-item status (Phase 9).
+model IngestionJobDocument {
+  id          String             @id @default(cuid())
+  jobId       String
+  documentId  String
+  /// "pending" | "processing" | "completed" | "failed" | "skipped"
+  status      String             @default("pending")
+  error       String?
+  createdAt   DateTime           @default(now())
+  completedAt DateTime?
+  job         IngestionJob       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  document    KnowledgeDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, status])
+}
+
+/// A log line produced during an ingestion job (Phase 9).
+model IngestionLog {
+  id         String        @id @default(cuid())
+  jobId      String
+  /// "info" | "warn" | "error"
+  level      String
+  message    String
+  documentId String?
+  createdAt  DateTime      @default(now())
+  job        IngestionJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@index([jobId, createdAt])
+}
+
+/// A recorded search query for analytics (Phase 9).
+///
+/// Written by lib/ai/search.ts on every retrieval so the dashboard can show
+/// most-searched topics, failed searches, and retrieval latency.
+model SearchEvent {
+  id             String   @id @default(cuid())
+  query          String
+  /// Serialized retrieve filters (category, state, language, ...) as JSON.
+  filters        Json?
+  resultCount    Int
+  usedEmbeddings Boolean
+  /// Retrieval latency in milliseconds.
+  latencyMs      Int
+  success        Boolean  @default(true)
+  userId         String?
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([query])
+  @@index([success])
+}
+
+/// A quality-check result for a document (Phase 9).
+///
+/// `checkType` is one of: "metadata" | "chunks" | "embeddings" | "duplicates".
+/// `status` is one of: "pass" | "warn" | "fail".
+model QualityCheckResult {
+  id         String             @id @default(cuid())
+  documentId String
+  checkType  String
+  status     String
+  message    String
+  details    Json?
   createdAt  DateTime           @default(now())
   document   KnowledgeDocument  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId, checkType])
 }
