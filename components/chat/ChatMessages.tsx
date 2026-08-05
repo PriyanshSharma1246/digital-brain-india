@@ -52,6 +52,8 @@ export default function ChatMessages({
               message={msg.message}
               createdAt={msg.createdAt}
               isError={msg.isError}
+              usedToolId={msg.usedToolId}
+              usedToolLabel={msg.usedToolLabel}
             />
           ))}
 

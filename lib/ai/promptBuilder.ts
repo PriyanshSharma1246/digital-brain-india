@@ -1,6 +1,7 @@
 import type { RetrievedChunk } from "./search";
 import { buildKnowledgeContext } from "./rag";
 import type { AgentDefinition } from "@/lib/agents";
+import type { ToolResult } from "@/lib/tools";
 
 /**
  * Prompt construction for the RAG-augmented chat flow.
@@ -13,6 +14,10 @@ import type { AgentDefinition } from "@/lib/agents";
  * Phase 6 — the prompt builder now injects the agent identity, system prompt,
  * and agent capabilities before the conversation history, so the model always
  * knows which specialist agent is answering.
+ *
+ * Phase 7 — the prompt builder now supports an optional Tool Results block
+ * injected between the agent prompt and the RAG context, so the model sees
+ * tool output before knowledge retrieval.
  */
 
 /** A single message from the persistent conversation history. */
@@ -38,6 +43,12 @@ export interface ChatPromptInput {
    * Error messages are excluded by the caller. Empty when no history exists.
    */
   conversationHistory?: ConversationHistoryMessage[];
+  /**
+   * Phase 7 — Optional tool result from a tool execution.
+   * When present, the tool output is injected into the prompt above the RAG
+   * context so the model sees the tool result before the knowledge base.
+   */
+  toolResult?: ToolResult | null;
 }
 
 /** The assembled prompt plus a flag indicating whether RAG context was used. */
@@ -129,26 +140,47 @@ function buildHistoryBlock(history: ConversationHistoryMessage[]): string {
 }
 
 /**
+ * Builds the Phase 7 Tool Results block.
+ *
+ * Successful tool output is injected so the model can reference the computed
+ * result while answering. Failed tool executions are skipped entirely — the
+ * chat proceeds normally without the tool output (per the error-handling
+ * requirement).
+ */
+function buildToolResultsBlock(toolResult: ToolResult | null | undefined): string {
+  if (!toolResult || !toolResult.success || !toolResult.output) return "";
+
+  const label = toolResult.metadata?.label ?? toolResult.toolId;
+  return [
+    `Tool used: ${label}`,
+    toolResult.output,
+  ].join("\n");
+}
+
+/**
  * Builds the final prompt sent to Gemini.
  *
  * The prompt is assembled from (in order):
  *   1. The agent identity, system prompt, and capabilities.
- *   2. The RAG knowledge block (only when chunks were retrieved).
- *   3. The live web context (only when relevant).
- *   4. The uploaded file context (only when files exist).
- *   5. Recent conversation history (only when available).
- *   6. The user question (or an image-analysis instruction).
+ *   2. The Tool Results block (only when a tool executed successfully).
+ *   3. The RAG knowledge block (only when chunks were retrieved).
+ *   4. The live web context (only when relevant).
+ *   5. The uploaded file context (only when files exist).
+ *   6. Recent conversation history (only when available).
+ *   7. The user question (or an image-analysis instruction).
  *
  * Empty sections are filtered out so the prompt stays compact.
  */
 export function buildChatPrompt(input: ChatPromptInput): ChatPromptResult {
   const ragUsed = input.retrievedChunks.length > 0;
   const agentBlock = buildAgentBlock(input.agent);
+  const toolResultsBlock = buildToolResultsBlock(input.toolResult);
   const ragInstruction = buildRagInstruction(input.retrievedChunks);
   const historyBlock = buildHistoryBlock(input.conversationHistory ?? []);
 
   const sections: string[] = [
     agentBlock,
+    toolResultsBlock,
     ragInstruction,
     input.liveContext
       ? `Use the live information below when the question requires current or recent data. Include source links in the answer.\n\nLive information:\n${input.liveContext}`

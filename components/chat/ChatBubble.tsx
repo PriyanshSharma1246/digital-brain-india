@@ -13,6 +13,10 @@ type ChatBubbleProps = {
   createdAt?: number;
   /** renders the bubble in a red "failed" style */
   isError?: boolean;
+  /** Phase 7 — tool id used to answer (e.g. "calculator"). */
+  usedToolId?: string;
+  /** Phase 7 — human-readable tool label (e.g. "🧮 Calculator"). */
+  usedToolLabel?: string;
 };
 
 function formatTime(timestamp: number): string {
@@ -133,6 +137,8 @@ export default function ChatBubble({
   message,
   createdAt,
   isError = false,
+  usedToolId,
+  usedToolLabel,
 }: ChatBubbleProps) {
   const isUser = role === "user";
   const [copied, setCopied] = useState(false);
@@ -214,6 +220,15 @@ export default function ChatBubble({
             isUser ? "flex-row-reverse" : "flex-row"
           }`}
         >
+          {!isUser && usedToolId && usedToolLabel ? (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300"
+              title={`Tool used: ${usedToolId}`}
+            >
+              {usedToolLabel}
+            </span>
+          ) : null}
+
           {createdAt ? <span>{formatTime(createdAt)}</span> : null}
 
           {!isUser ? (

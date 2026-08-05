@@ -1,8 +1,18 @@
-type LiveSearchResult = {
+export type LiveSearchResult = {
   title: string;
   url: string;
   snippet: string;
 };
+
+/** Result of a live web search attempt. */
+export interface LiveSearchInfo {
+  /** True when the query looks like it needs live data and a search was attempted. */
+  shouldUseLiveInfo: boolean;
+  /** Parsed results (empty when the search failed or returned nothing). */
+  results: LiveSearchResult[];
+  /** Prompt-ready context block (empty when no results). */
+  context: string;
+}
 
 const CURRENT_TOPICS = [
   "government",
@@ -29,7 +39,7 @@ const RECENT_QUERY_HINTS = [
   "live",
 ];
 
-function looksLikeLiveQuery(message: string) {
+export function looksLikeLiveQuery(message: string) {
   const normalized = message.toLowerCase();
   const hasLiveHint = RECENT_QUERY_HINTS.some((hint) => normalized.includes(hint));
   const hasTopic = CURRENT_TOPICS.some((topic) => normalized.includes(topic));
@@ -58,7 +68,7 @@ function extractDuckDuckGoResults(html: string): LiveSearchResult[] {
   return results.slice(0, 4);
 }
 
-export async function searchLiveWeb(query: string) {
+export async function searchLiveWeb(query: string): Promise<LiveSearchInfo> {
   if (!looksLikeLiveQuery(query)) {
     return { shouldUseLiveInfo: false, results: [] as LiveSearchResult[], context: "" };
   }

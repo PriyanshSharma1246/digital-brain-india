@@ -426,6 +426,8 @@ export default function ChatClient({ user }: ChatClientProps) {
             agentName?: string;
             agentIcon?: string;
             routed?: boolean;
+            usedToolId?: string | null;
+            usedToolLabel?: string | null;
           };
 
           if (payload.type === "chunk" && typeof payload.text === "string") {
@@ -436,6 +438,24 @@ export default function ChatClient({ user }: ChatClientProps) {
           if (payload.type === "done" && typeof payload.reply === "string") {
             finished = true;
             updateStreamingAssistantMessage(payload.reply);
+
+            // Phase 7 — attach the tool-usage indicator to the assistant
+            // message so the bubble can render e.g. "🧮 Calculator".
+            if (payload.usedToolId && payload.usedToolLabel) {
+              updateMessages(
+                (prev) =>
+                  prev.map((messageItem) =>
+                    messageItem.id === assistantId
+                      ? {
+                          ...messageItem,
+                          usedToolId: payload.usedToolId ?? undefined,
+                          usedToolLabel: payload.usedToolLabel ?? undefined,
+                        }
+                      : messageItem
+                  ),
+                currentId
+              );
+            }
 
             // When the server routed the query to a specialist agent, surface
             // it in the UI so the user can see which agent answered.

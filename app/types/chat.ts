@@ -14,6 +14,10 @@ export type ChatMessage = {
   createdAt: number;
   /** true when the bubble represents a failed request */
   isError?: boolean;
+  /** Phase 7 — tool id used to answer this message (e.g. "calculator"). */
+  usedToolId?: string;
+  /** Phase 7 — human-readable tool label for the UI (e.g. "🧮 Calculator"). */
+  usedToolLabel?: string;
 };
 
 export type Conversation = {

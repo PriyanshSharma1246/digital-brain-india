@@ -19,6 +19,8 @@ import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
 import { sanitizeTextInput } from "@/lib/sanitize";
 import { logError } from "@/lib/logger";
 import { addMessage, listMessages } from "@/lib/conversations";
+import { initializeTools, routeAndExecute } from "@/lib/tools";
+import type { ToolResult } from "@/lib/tools";
 
 /**
  * Extracts a human-readable error message from a thrown value.
@@ -150,6 +152,19 @@ export async function POST(req: Request) {
     const agentDefinition = getAgent(activeAgentId);
     const agentCategories = getAgentCategories(activeAgentId);
 
+    // Phase 7 — Modular Tool Calling. Initialize the registry (idempotent) and
+    // route the message to the first tool that can handle it, scoped by the
+    // active agent. Tool failures never fail the chat: `routeAndExecute`
+    // wraps execution so a throwing tool yields a non-fatal result that the
+    // prompt builder simply skips.
+    initializeTools();
+    const toolExecution = await routeAndExecute({
+      message: incomingMessage,
+      agentId: activeAgentId,
+    });
+    const toolResult: ToolResult | null = toolExecution.result;
+    const usedToolId: string | null = toolExecution.toolId;
+
     const fileEntries = await getConversationFiles(session.user.id, conversation);
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
@@ -159,7 +174,21 @@ export async function POST(req: Request) {
       categories: agentCategories,
     });
     const retrievedChunks: RetrievedChunk[] = searchResult.chunks;
-    const liveInfo = await searchLiveWeb(incomingMessage);
+
+    // Live web search. When the live-search tool already handled the message,
+    // skip the legacy call to avoid running the same search twice. Otherwise
+    // fall back to the existing live-context injection.
+    let liveContext = "";
+    if (usedToolId === "live-search") {
+      const liveTool = toolResult;
+      if (liveTool?.success && liveTool.output) {
+        liveContext = liveTool.output;
+      }
+    } else {
+      const liveInfo = await searchLiveWeb(incomingMessage);
+      liveContext =
+        liveInfo.shouldUseLiveInfo && liveInfo.context ? liveInfo.context : "";
+    }
     const imagePayload = parseImageAttachment(image);
 
     // Load recent conversation history (Phase 4). If it fails, the chat
@@ -177,10 +206,10 @@ export async function POST(req: Request) {
       agent: agentDefinition,
       message: incomingMessage,
       retrievedChunks,
-      liveContext:
-        liveInfo.shouldUseLiveInfo && liveInfo.context ? liveInfo.context : "",
+      liveContext,
       fileContext,
       conversationHistory,
+      toolResult,
     });
 
     const multimodalPayload = buildMultimodalPrompt(prompt, imagePayload);
@@ -312,6 +341,10 @@ export async function POST(req: Request) {
                 agentName: agentDefinition.name,
                 agentIcon: agentDefinition.icon,
                 routed: Boolean(routed),
+                // Phase 7 — tool usage indicator. Present only when a tool
+                // executed successfully so the UI can show e.g. "🧮 Calculator".
+                usedToolId: usedToolId,
+                usedToolLabel: toolResult?.metadata?.label ?? null,
               }) + "\n"
             )
           );
