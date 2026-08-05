@@ -1,6 +1,6 @@
 ﻿import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { GoogleGenAI, ApiError } from "@google/genai";
+import { GoogleGenAI, ApiError, GenerateContentResponse } from "@google/genai";
 import { prisma } from "@/lib/prisma";
 import { authOptions } from "@/lib/auth";
 import { createId } from "@/lib/chatStorage";
@@ -240,7 +240,7 @@ export async function POST(req: Request) {
 
     const multimodalPayload = buildMultimodalPrompt(prompt, imagePayload);
     const encoder = new TextEncoder();
-    let generator: AsyncGenerator<any, any, any> | null = null;
+    let generator: AsyncGenerator<GenerateContentResponse> | null = null;
     let finalReply = "";
     let streamError: string | null = null;
 
@@ -309,7 +309,7 @@ export async function POST(req: Request) {
         try {
           for await (const chunk of generator) {
             // `text` is a getter property on GenerateContentResponse in @google/genai v2.x
-            const text = typeof chunk?.text === "function" ? chunk.text() : (chunk?.text || "");
+            const text = chunk.text || "";
             if (!text) continue;
             finalReply += text;
             controller.enqueue(

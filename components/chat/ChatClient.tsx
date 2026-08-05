@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { ChatMessage, Conversation, ConversationResponse } from "@/app/types/chat";
+import type { ChatMessage, Conversation } from "@/app/types/chat";
 import { createConversation, createMessage, createId, deriveTitle } from "@/lib/chatStorage";
 import ChatSidebar from "@/components/chat/ChatSidebar";
 import ChatMessages from "@/components/chat/ChatMessages";
@@ -41,7 +41,7 @@ export default function ChatClient({ user }: ChatClientProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadingFileName, setUploadingFileName] = useState<string | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [, setIsRefreshing] = useState(false);
   const [assistantMessageId, setAssistantMessageId] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -70,10 +70,11 @@ export default function ChatClient({ user }: ChatClientProps) {
   }, [conversationAgents]);
 
   useEffect(() => {
-    if (activeId) {
+    if (!activeId) return;
+    void Promise.resolve().then(() => {
       setActiveAgent(conversationAgents[activeId] ?? "general");
       setRoutedAgent(null);
-    }
+    });
   }, [activeId, conversationAgents]);
 
   useEffect(() => {
@@ -84,7 +85,7 @@ export default function ChatClient({ user }: ChatClientProps) {
       (window as Window & typeof globalThis & { webkitSpeechRecognition?: new () => SpeechRecognitionLike }).webkitSpeechRecognition;
 
     if (!SpeechRecognitionCtor) {
-      setVoiceStatus("Voice input is not supported in this browser.");
+      void Promise.resolve().then(() => setVoiceStatus("Voice input is not supported in this browser."));
       return;
     }
 
@@ -112,7 +113,7 @@ export default function ChatClient({ user }: ChatClientProps) {
       setVoiceStatus(null);
     };
 
-    setRecognition(recognitionInstance);
+    void Promise.resolve().then(() => setRecognition(recognitionInstance));
   }, []);
 
   useEffect(() => {
@@ -644,7 +645,7 @@ export default function ChatClient({ user }: ChatClientProps) {
         result.message || `Uploaded and processed ${file.name}.`;
       setUploadStatus(successMessage);
       updateAssistantMessage(successMessage);
-    } catch (error) {
+    } catch {
       const message = "Failed to upload file. Please check your connection.";
       setUploadStatus(message);
       updateAssistantMessage(message, true);

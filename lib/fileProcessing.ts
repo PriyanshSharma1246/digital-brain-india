@@ -35,7 +35,8 @@ export async function extractTextFromBuffer(
   mimeType: string
 ) {
   const lowerName = fileName.toLowerCase();
-  if (lowerName.endsWith(".pdf")) {
+  const normalizedMime = mimeType.toLowerCase();
+  if (lowerName.endsWith(".pdf") || normalizedMime === "application/pdf") {
     const parseResult = await new PDFParse(buffer).getText();
     return truncateText(parseResult.text || "");
   }
@@ -61,5 +62,5 @@ export async function extractTextFromBuffer(
     return truncateText(buffer.toString("utf-8"));
   }
 
-  throw new Error("Unsupported file type");
+  throw new Error(`Unsupported file type: ${fileName} (${normalizedMime})`);
 }

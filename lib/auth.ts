@@ -20,7 +20,6 @@ if (_missing.length > 0) {
   // Example: `NEXTAUTH_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")`
   // and set `NEXTAUTH_URL` to your app origin (e.g. http://localhost:3000).
   // Keep secrets out of source control (use .env.local or your hosting provider).
-  // eslint-disable-next-line no-console
   console.warn("[auth] Missing environment variables:", _missing.join(", "));
 }
 

@@ -1,0 +1,33 @@
+﻿
+C:\Users\hello\Desktop\digital-brain-india\components\Hero.tsx
+   7:17  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+  11:14  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+  18:27  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+
+C:\Users\hello\Desktop\digital-brain-india\components\Vision.tsx
+  11:25  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+
+C:\Users\hello\Desktop\digital-brain-india\components\chat\ChatMessages.tsx
+  42:33  error  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+
+C:\Users\hello\Desktop\digital-brain-india\lib\auth.ts
+  23:3  warning  Unused eslint-disable directive (no problems were reported from 'no-console')
+
+C:\Users\hello\Desktop\digital-brain-india\lib\fileProcessing.ts
+  35:3  warning  'mimeType' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\hello\Desktop\digital-brain-india\lib\knowledge\jobs.ts
+  4:10  warning  'logError' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\hello\Desktop\digital-brain-india\lib\knowledge\splitter.ts
+  163:9  warning  'level' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\hello\Desktop\digital-brain-india\lib\tools\calculator.ts
+  292:12  warning  'error' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\hello\Desktop\digital-brain-india\scripts\check_knowledge_entry.js
+  1:26  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+Γ£û 11 problems (6 errors, 5 warnings)
+  0 errors and 1 warning potentially fixable with the `--fix` option.
+

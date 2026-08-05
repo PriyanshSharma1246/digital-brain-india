@@ -188,7 +188,10 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
   }, [search]);
 
   useEffect(() => {
-    void loadDashboard();
+    const id = setTimeout(() => {
+      void loadDashboard();
+    }, 0);
+    return () => clearTimeout(id);
   }, [loadDashboard]);
 
   /** Loads analytics data. */
@@ -208,7 +211,10 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
   }, []);
 
   useEffect(() => {
-    void loadAnalytics();
+    const id = setTimeout(() => {
+      void loadAnalytics();
+    }, 0);
+    return () => clearTimeout(id);
   }, [loadAnalytics]);
 
   /** Loads recent ingestion jobs. */
@@ -228,7 +234,10 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
   }, []);
 
   useEffect(() => {
-    void loadJobs();
+    const id = setTimeout(() => {
+      void loadJobs();
+    }, 0);
+    return () => clearTimeout(id);
   }, [loadJobs]);
 
   /** Loads a single document's full detail for the drawer. */
@@ -629,6 +638,8 @@ export default function KnowledgeDashboard({ user }: KnowledgeDashboardProps) {
             </div>
           </Card>
         </div>
+      ) : analyticsLoading ? (
+        <p className="text-sm text-slate-400">Loading analytics…</p>
       ) : null}
 
       {/* Ingestion jobs */}

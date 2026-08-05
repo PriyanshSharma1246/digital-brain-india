@@ -8,7 +8,7 @@ export default function Vision() {
         </p>
 
         <h2 className="mt-4 text-5xl font-extrabold">
-          Building India's AI Brain
+          Building India&apos;s AI Brain
         </h2>
 
         <p className="mt-8 text-lg leading-8 text-gray-300 max-w-4xl">

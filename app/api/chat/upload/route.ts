@@ -14,9 +14,7 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 10;
 const recentRequests = new Map<string, number[]>();
 
-function getExtension(fileName: string) {
-  return fileName.slice(fileName.lastIndexOf(".")).toLowerCase();
-}
+// Note: extension extraction not required here; validation uses file.name inside validateUploadFile
 
 function isRateLimited(userId: string) {
   const now = Date.now();
@@ -54,7 +52,6 @@ export async function POST(req: Request) {
   }
 
   const fileName = sanitizeTextInput(file.name, { maxLength: 120 });
-  const ext = getExtension(fileName);
   const validation = validateUploadFile(file, ALLOWED_EXTENSIONS, MAX_UPLOAD_SIZE_BYTES);
   if (!validation.ok) {
     return NextResponse.json({ success: false, error: validation.error }, { status: 400 });
@@ -69,7 +66,7 @@ export async function POST(req: Request) {
   try {
     extractedText = await extractTextFromBuffer(Buffer.from(data), fileName, file.type);
   } catch (error) {
-    logError("Failed to extract uploaded file content", { userId: session.user.id, fileName });
+    logError("Failed to extract uploaded file content", { userId: session.user.id, fileName, error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ success: false, error: "Failed to extract file content" }, { status: 500 });
   }
 
@@ -84,7 +81,7 @@ export async function POST(req: Request) {
       },
     });
   } catch (error) {
-    logError("Failed to persist uploaded file entry", { userId: session.user.id, fileName });
+    logError("Failed to persist uploaded file entry", { userId: session.user.id, fileName, error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ success: false, error: "Unable to save upload history" }, { status: 500 });
   }
 

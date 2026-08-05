@@ -7,6 +7,9 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // Log the error to the console for client-side diagnostics.
+  // Avoid rendering detailed error messages to users in production.
+  console.error(error);
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-950 text-slate-100">

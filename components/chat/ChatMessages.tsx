@@ -39,7 +39,7 @@ export default function ChatMessages({
             How can I help you today?
           </h2>
           <p className="mt-2 max-w-md text-sm text-slate-500">
-            Ask any question — I'll do my best to answer with the help of
+            Ask any question — I&apos;ll do my best to answer with the help of
             Gemini AI.
           </p>
         </div>

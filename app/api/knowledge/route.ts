@@ -70,7 +70,7 @@ export async function POST(req: Request) {
     const entry = await createKnowledgeEntry({ title, content, category, source, tags });
     return NextResponse.json({ success: true, entry });
   } catch (error) {
-    logError("Knowledge entry creation failed", { userId: session.user.id, title, category });
+    logError("Knowledge entry creation failed", { userId: session.user.id, title, category, error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ success: false, error: "Unable to save knowledge entry" }, { status: 500 });
   }
 }
@@ -97,7 +97,7 @@ export async function PUT(req: Request) {
     const entry = await updateKnowledgeEntry(id, { title, content, category, source, tags });
     return NextResponse.json({ success: true, entry });
   } catch (error) {
-    logError("Knowledge entry update failed", { userId: session.user.id, id });
+    logError("Knowledge entry update failed", { userId: session.user.id, id, error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ success: false, error: "Unable to update knowledge entry" }, { status: 500 });
   }
 }
@@ -118,7 +118,7 @@ export async function DELETE(req: Request) {
     await deleteKnowledgeEntry(id);
     return NextResponse.json({ success: true });
   } catch (error) {
-    logError("Knowledge entry deletion failed", { userId: session.user.id, id });
+    logError("Knowledge entry deletion failed", { userId: session.user.id, id, error: error instanceof Error ? error.message : String(error) });
     return NextResponse.json({ success: false, error: "Unable to delete knowledge entry" }, { status: 500 });
   }
 }

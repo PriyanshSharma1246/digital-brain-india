@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
@@ -36,15 +36,17 @@ function formatTime(timestamp: number): string {
   });
 }
 
+type CodeProps = {
+  inline?: boolean;
+  className?: string;
+  children?: ReactNode;
+};
+
 function Code({
   inline,
   className,
   children,
-}: {
-  inline?: boolean;
-  className?: string;
-  children: any;
-}) {
+}: CodeProps) {
   const [copied, setCopied] = useState(false);
   const code = String(children ?? "").trimEnd();
   const languageMatch = /language-(\w+)/.exec(className || "");
@@ -87,56 +89,62 @@ function Code({
   );
 }
 
-const markdownComponents = {
-  a: (props: any) => (
+type MarkdownProps = {
+  children?: ReactNode;
+  href?: string;
+  className?: string;
+};
+
+const markdownComponents: Record<string, React.ComponentType<MarkdownProps>> = {
+  a: ({ href, children }) => (
     <a
-      href={props.href}
+      href={href}
       target="_blank"
       rel="noreferrer noopener"
       className="text-blue-300 underline decoration-blue-400/50 transition hover:text-blue-200"
     >
-      {props.children}
+      {children}
     </a>
   ),
-  blockquote: (props: any) => (
+  blockquote: ({ children }) => (
     <blockquote className="my-4 rounded-xl border-l-4 border-slate-600 bg-slate-900/80 px-4 py-3 text-slate-200 italic">
-      {props.children}
+      {children}
     </blockquote>
   ),
-  h1: (props: any) => (
-    <h1 className="mt-6 text-xl font-semibold text-slate-100">{props.children}</h1>
+  h1: ({ children }) => (
+    <h1 className="mt-6 text-xl font-semibold text-slate-100">{children}</h1>
   ),
-  h2: (props: any) => (
-    <h2 className="mt-5 text-lg font-semibold text-slate-100">{props.children}</h2>
+  h2: ({ children }) => (
+    <h2 className="mt-5 text-lg font-semibold text-slate-100">{children}</h2>
   ),
-  h3: (props: any) => (
-    <h3 className="mt-5 text-base font-semibold text-slate-100">{props.children}</h3>
+  h3: ({ children }) => (
+    <h3 className="mt-5 text-base font-semibold text-slate-100">{children}</h3>
   ),
-  ul: (props: any) => (
-    <ul className="my-3 ml-6 list-disc space-y-1 text-slate-200">{props.children}</ul>
+  ul: ({ children }) => (
+    <ul className="my-3 ml-6 list-disc space-y-1 text-slate-200">{children}</ul>
   ),
-  ol: (props: any) => (
-    <ol className="my-3 ml-6 list-decimal space-y-1 text-slate-200">{props.children}</ol>
+  ol: ({ children }) => (
+    <ol className="my-3 ml-6 list-decimal space-y-1 text-slate-200">{children}</ol>
   ),
-  li: (props: any) => <li className="leading-6">{props.children}</li>,
-  p: (props: any) => (
-    <p className="mb-3 leading-7 text-slate-200">{props.children}</p>
+  li: ({ children }) => <li className="leading-6">{children}</li>,
+  p: ({ children }) => (
+    <p className="mb-3 leading-7 text-slate-200">{children}</p>
   ),
-  table: (props: any) => (
+  table: ({ children }) => (
     <div className="my-4 overflow-x-auto rounded-2xl border border-slate-700 bg-slate-950">
-      <table className="min-w-full border-collapse text-sm">{props.children}</table>
+      <table className="min-w-full border-collapse text-sm">{children}</table>
     </div>
   ),
-  th: (props: any) => (
+  th: ({ children }) => (
     <th className="border border-slate-700 bg-slate-900 px-3 py-2 text-left font-semibold text-slate-100">
-      {props.children}
+      {children}
     </th>
   ),
-  td: (props: any) => (
-    <td className="border border-slate-700 px-3 py-2 text-slate-200">{props.children}</td>
+  td: ({ children }) => (
+    <td className="border border-slate-700 px-3 py-2 text-slate-200">{children}</td>
   ),
-  code: Code,
-} as any;
+  code: Code as React.ComponentType<MarkdownProps>,
+};
 
 /**
  * A single chat message bubble (user = right/blue, assistant = left/slate).

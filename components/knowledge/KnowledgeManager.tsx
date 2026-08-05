@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type KnowledgeEntry = {
   id: string;
@@ -47,15 +47,15 @@ export default function KnowledgeManager({ user }: KnowledgeManagerProps) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  async function refreshEntries() {
+  const refreshEntries = useCallback(async () => {
     const res = await fetch(`/api/knowledge?search=${encodeURIComponent(search)}`);
     const data = await res.json();
     setEntries(data.entries ?? []);
-  }
+  }, [search]);
 
   useEffect(() => {
-    void refreshEntries();
-  }, [search]);
+    void Promise.resolve().then(refreshEntries);
+  }, [refreshEntries]);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

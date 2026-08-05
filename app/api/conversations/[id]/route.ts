@@ -3,7 +3,6 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import {
   deleteConversation,
-  getConversation,
   logConversationError,
   renameConversation,
 } from "@/lib/conversations";

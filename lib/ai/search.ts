@@ -133,15 +133,34 @@ function buildDocumentWhere(filters: SearchFilters): Prisma.KnowledgeDocumentWhe
  */
 export async function findChunksByVector(
   queryEmbedding: number[],
-  options: RetrieveOptions = {}
+  options: RetrieveOptions = {},
+  queryText?: string
 ): Promise<RetrievedChunk[]> {
   const { topK = 4 } = options;
   const documentWhere = buildDocumentWhere(options);
 
+  // Narrow candidate set by optionally matching keyword terms from the query
+  // when available. This reduces the number of rows pulled into memory and
+  // speeds up cosine computations for large corpora.
+  const terms = queryText
+    ? queryText
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((t) => t.length >= 3)
+    : [];
+
   const where: Prisma.KnowledgeChunkWhereInput = {
     embedding: { not: Prisma.DbNull },
     ...(Object.keys(documentWhere).length > 0 ? { document: documentWhere } : {}),
+    ...(terms.length > 0
+      ? {
+          OR: terms.slice(0, 5).map((term) => ({ content: { contains: term, mode: "insensitive" as const } })),
+        }
+      : {}),
   };
+
+  // Cap candidates to a reasonable size to avoid large memory and CPU cost.
+  const CANDIDATE_LIMIT = 1000;
 
   const rows = await prisma.knowledgeChunk.findMany({
     where,
@@ -163,19 +182,15 @@ export async function findChunksByVector(
         },
       },
     },
+    take: CANDIDATE_LIMIT,
+    orderBy: { createdAt: "desc" },
   });
 
   const scored = rows
     .map((row) => {
       const embedding = row.embedding;
-      // Prisma returns JsonValue; guard against non-array values.
-      const vector = Array.isArray(embedding)
-        ? (embedding as number[]).filter((v) => typeof v === "number")
-        : [];
-      return {
-        row,
-        score: cosineSimilarity(queryEmbedding, vector),
-      };
+      const vector = Array.isArray(embedding) ? (embedding as number[]).filter((v) => typeof v === "number") : [];
+      return { row, score: cosineSimilarity(queryEmbedding, vector) };
     })
     .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score)
@@ -277,7 +292,6 @@ export async function retrieveChunks(
   query: string,
   options: RetrieveOptions = {}
 ): Promise<RetrieveResult> {
-  const { topK = 4 } = options;
   const started = performance.now();
 
   try {
@@ -288,7 +302,7 @@ export async function retrieveChunks(
     let usedEmbeddings = false;
 
     if (queryEmbedding) {
-      chunks = await findChunksByVector(queryEmbedding, options);
+      chunks = await findChunksByVector(queryEmbedding, options, query);
       if (chunks.length > 0) {
         usedEmbeddings = true;
       }

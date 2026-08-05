@@ -160,7 +160,6 @@ interface HeadingInfo {
 function detectHeading(unit: string): HeadingInfo | null {
   const match = unit.match(/^(#{1,6})\s+(.+)$/);
   if (!match) return null;
-  const level = match[1].length;
   const heading = match[2].trim();
   return { path: [heading], heading };
 }

@@ -47,6 +47,7 @@ export class NullEmbeddingProvider implements EmbeddingProvider {
   }
 
   async generateEmbedding(_text: string): Promise<EmbeddingVector> {
+    void _text;
     return null;
   }
 

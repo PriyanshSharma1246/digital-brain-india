@@ -289,7 +289,7 @@ async function execute(input: string): Promise<ToolResult> {
       },
       executionTime: performance.now() - started,
     };
-  } catch (error) {
+  } catch {
     return {
       success: false,
       toolId: "calculator",

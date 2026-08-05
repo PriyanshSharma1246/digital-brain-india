@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ingestParsedDocument } from "./ingest";
 import { loadKnowledgeFromDirectory } from "./loader";
-import { logError, logEvent } from "@/lib/logger";
+import { logEvent } from "@/lib/logger";
 import type { KnowledgeContentType, ParsedDocument } from "./types";
 
 /**

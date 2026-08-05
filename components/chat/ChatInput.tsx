@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useRef, useEffect, useState, type ChangeEvent, type KeyboardEvent } from "react";
 import Spinner from "@/components/ui/Spinner";
 
@@ -178,7 +179,15 @@ export default function ChatInput({
       {imagePreview ? (
         <div className="absolute inset-x-4 top-[-3.75rem] z-10 flex items-center justify-between rounded-2xl border border-slate-700 bg-slate-900/95 px-3 py-2 shadow-xl">
           <div className="flex items-center gap-2">
-            <img src={imagePreview} alt="Selected preview" className="h-10 w-10 rounded-lg object-cover" />
+            <div className="relative h-10 w-10 overflow-hidden rounded-lg">
+              <Image
+                src={imagePreview}
+                alt="Selected preview"
+                fill
+                className="object-cover"
+                unoptimized
+              />
+            </div>
             <span className="text-sm text-slate-200">Image ready</span>
           </div>
           <button

@@ -6,6 +6,7 @@ import { getEmbeddingProvider } from "@/lib/ai/embeddings";
 import { logError, logEvent } from "@/lib/logger";
 import { getAnalyticsDashboard } from "./analytics";
 import { getQualitySummary } from "./quality";
+import { getCache, setCache } from "@/lib/cache";
 
 /**
  * Admin service for the Knowledge Management Dashboard.
@@ -156,6 +157,10 @@ export async function listKnowledgeDocuments(search = ""): Promise<KnowledgeDocu
 
 /** Returns dashboard aggregate stats (totals + last ingestion time). */
 export async function getKnowledgeDashboardStats(): Promise<KnowledgeDashboardStats> {
+  const cacheKey = "knowledge:dashboard:stats";
+  const cached = getCache<KnowledgeDashboardStats>(cacheKey);
+  if (cached) return cached;
+
   const [totalDocuments, totalChunks, lastDocument] = await Promise.all([
     prisma.knowledgeDocument.count(),
     prisma.knowledgeChunk.count(),
@@ -165,11 +170,13 @@ export async function getKnowledgeDashboardStats(): Promise<KnowledgeDashboardSt
     }),
   ]);
 
-  return {
+  const result = {
     totalDocuments,
     totalChunks,
     lastIngestionAt: lastDocument?.updatedAt ?? null,
   };
+  setCache(cacheKey, result, 30); // cache for 30s
+  return result;
 }
 
 /** Fetches a single document with its ordered chunks and version history. */
@@ -332,7 +339,12 @@ export async function safeReIndexMissingEmbeddings() {
 
 /** Fetches the analytics dashboard payload. */
 export async function getKnowledgeAnalytics() {
-  return getAnalyticsDashboard();
+  const cacheKey = "knowledge:analytics";
+  const cached = getCache(cacheKey) as unknown;
+  if (cached) return cached;
+  const analytics = await getAnalyticsDashboard();
+  setCache(cacheKey, analytics, 60); // cache for 60s
+  return analytics;
 }
 
 /** Fetches the quality check summary. */

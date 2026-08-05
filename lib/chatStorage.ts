@@ -53,17 +53,16 @@ export function serializeStoredMessage(
 
 export function parseStoredMessage(raw: string): StoredMessage {
   try {
-    const parsed = JSON.parse(raw);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      typeof (parsed as any).text === "string"
-    ) {
-      return {
-        conversationId: typeof (parsed as any).conversationId === "string" ? (parsed as any).conversationId : undefined,
-        text: (parsed as any).text,
-        title: typeof (parsed as any).title === "string" ? (parsed as any).title : undefined,
-      };
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.text === "string") {
+        return {
+          conversationId: typeof obj.conversationId === "string" ? obj.conversationId : undefined,
+          text: obj.text,
+          title: typeof obj.title === "string" ? obj.title : undefined,
+        };
+      }
     }
   } catch {
     // Fallback to plain text content.
@@ -90,9 +89,23 @@ function isConversation(value: unknown): value is Conversation {
 }
 
 export function loadConversations(): Conversation[] {
-  return [];
+  try {
+    if (typeof localStorage === "undefined") return [];
+    const raw = localStorage.getItem("conversations");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isConversation) as Conversation[];
+  } catch {
+    return [];
+  }
 }
 
-export function saveConversations(_conversations: Conversation[]): void {
-  return;
+export function saveConversations(conversations: Conversation[]): void {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem("conversations", JSON.stringify(conversations));
+  } catch {
+    // ignore storage errors (private mode, quota exceeded)
+  }
 }

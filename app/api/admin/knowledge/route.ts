@@ -11,6 +11,8 @@ import {
   safeReIngestKnowledgeBase,
 } from "@/lib/knowledge/admin";
 import { logError } from "@/lib/logger";
+import { requireSession } from "@/lib/api/utils";
+import { sanitizePrompt } from "@/lib/sanitize";
 
 /**
  * Admin Knowledge Management API.
@@ -27,13 +29,12 @@ import { logError } from "@/lib/logger";
 
 export async function GET(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const authResp = requireSession(session);
+  if (authResp) return authResp;
 
   try {
     const { searchParams } = new URL(req.url);
-    const search = searchParams.get("search") ?? "";
+    const search = sanitizePrompt(searchParams.get("search") ?? "");
     const view = searchParams.get("view");
 
     // GET /api/admin/knowledge?view=analytics -> analytics dashboard
@@ -55,8 +56,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ success: true, stats, documents });
   } catch (error) {
+    const userId = session?.user?.id ?? null;
     logError("Admin knowledge list failed", {
-      userId: session.user.id,
+      userId,
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({ success: false, error: "Unable to load knowledge dashboard" }, { status: 500 });
@@ -65,9 +67,8 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const authResp = requireSession(session);
+  if (authResp) return authResp;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -85,8 +86,9 @@ export async function POST(req: Request) {
     const result = await safeReIngestKnowledgeBase();
     return NextResponse.json({ success: true, result });
   } catch (error) {
+    const userId = session?.user?.id ?? null;
     logError("Admin knowledge re-ingest failed", {
-      userId: session.user.id,
+      userId,
       error: error instanceof Error ? error.message : String(error),
     });
     return NextResponse.json({ success: false, error: "Re-ingestion failed" }, { status: 500 });
@@ -95,23 +97,21 @@ export async function POST(req: Request) {
 
 export async function DELETE(req: Request) {
   const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-  }
+  const authResp = requireSession(session);
+  if (authResp) return authResp;
 
   const { searchParams } = new URL(req.url);
-  const id = searchParams.get("id");
-  if (!id) {
-    return NextResponse.json({ success: false, error: "Missing document id" }, { status: 400 });
-  }
+  const id = sanitizePrompt(searchParams.get("id") ?? undefined);
+  if (!id) return NextResponse.json({ success: false, error: "Missing document id" }, { status: 400 });
 
   try {
     // Deletes the document and its chunks atomically (see lib/knowledge/admin).
     await deleteKnowledgeDocument(id);
     return NextResponse.json({ success: true });
   } catch (error) {
+    const userId = session?.user?.id ?? null;
     logError("Admin knowledge delete failed", {
-      userId: session.user.id,
+      userId,
       documentId: id,
       error: error instanceof Error ? error.message : String(error),
     });

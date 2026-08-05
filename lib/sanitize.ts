@@ -1,3 +1,21 @@
+export function sanitizePrompt(input?: string, maxLen = 20000) {
+  if (!input) return "";
+  // Remove null bytes and control characters
+  let s = input.replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+  // Strip script tags
+  s = s.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+  // Limit length
+  if (s.length > maxLen) s = s.slice(0, maxLen);
+  return s;
+}
+
+export function sanitizeMarkdown(md?: string) {
+  if (!md) return "";
+  // Remove script tags and encode angle brackets to avoid raw HTML
+  let s = md.replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "");
+  s = s.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s;
+}
 export function sanitizeTextInput(value: string, options?: { maxLength?: number; preserveLineBreaks?: boolean }) {
   const maxLength = options?.maxLength ?? 4000;
   const normalized = value
