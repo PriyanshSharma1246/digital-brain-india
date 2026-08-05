@@ -2,6 +2,7 @@ import type { RetrievedChunk } from "./search";
 import { buildKnowledgeContext } from "./rag";
 import type { AgentDefinition } from "@/lib/agents";
 import type { ToolResult } from "@/lib/tools";
+import type { SynthesizerOutput } from "@/lib/planner";
 
 /**
  * Prompt construction for the RAG-augmented chat flow.
@@ -18,6 +19,13 @@ import type { ToolResult } from "@/lib/tools";
  * Phase 7 — the prompt builder now supports an optional Tool Results block
  * injected between the agent prompt and the RAG context, so the model sees
  * tool output before knowledge retrieval.
+ *
+ * Phase 8 — the prompt builder now supports multi-agent orchestration via
+ * `buildMultiAgentChatPrompt()`, which accepts the synthesizer output
+ * (planner output + multiple agent outputs + merged tool results + RAG
+ * context + conversation history + user message) and produces the final
+ * prompt. The existing `buildChatPrompt()` remains for backward
+ * compatibility with the single-agent fast path.
  */
 
 /** A single message from the persistent conversation history. */
@@ -193,4 +201,22 @@ export function buildChatPrompt(input: ChatPromptInput): ChatPromptResult {
   const prompt = sections.filter(Boolean).join("\n\n");
 
   return { prompt, ragUsed };
+}
+
+/**
+ * Phase 8 — Builds the final prompt for the multi-agent orchestration flow.
+ *
+ * Accepts the synthesizer output (which already contains the planner output,
+ * multiple agent outputs, merged tool results, RAG context, conversation
+ * history, and the user message) and returns the final prompt ready for
+ * Gemini. This is the primary entry point for the Planner → Executor →
+ * Synthesizer pipeline.
+ */
+export function buildMultiAgentChatPrompt(
+  synthesizerOutput: SynthesizerOutput
+): ChatPromptResult {
+  return {
+    prompt: synthesizerOutput.prompt,
+    ragUsed: synthesizerOutput.ragUsed,
+  };
 }

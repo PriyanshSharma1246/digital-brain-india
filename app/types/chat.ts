@@ -18,6 +18,16 @@ export type ChatMessage = {
   usedToolId?: string;
   /** Phase 7 — human-readable tool label for the UI (e.g. "🧮 Calculator"). */
   usedToolLabel?: string;
+  /** Phase 8 — all agents that participated in answering this message. */
+  agents?: string[];
+  /** Phase 8 — display names of participating agents. */
+  agentNames?: string[];
+  /** Phase 8 — icons of participating agents. */
+  agentIcons?: string[];
+  /** Phase 8 — all tool ids used across agents. */
+  usedToolIds?: string[];
+  /** Phase 8 — all tool labels used across agents. */
+  usedToolLabels?: string[];
 };
 
 export type Conversation = {

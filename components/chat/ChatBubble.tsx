@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import { useState } from "react";
+import ReactMarkdown from "react-markdown";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 import type { ChatRole } from "@/app/types/chat";
@@ -17,6 +17,16 @@ type ChatBubbleProps = {
   usedToolId?: string;
   /** Phase 7 — human-readable tool label (e.g. "🧮 Calculator"). */
   usedToolLabel?: string;
+  /** Phase 8 — all agents that participated in answering this message. */
+  agents?: string[];
+  /** Phase 8 — display names of participating agents. */
+  agentNames?: string[];
+  /** Phase 8 — icons of participating agents. */
+  agentIcons?: string[];
+  /** Phase 8 — all tool ids used across agents. */
+  usedToolIds?: string[];
+  /** Phase 8 — all tool labels used across agents. */
+  usedToolLabels?: string[];
 };
 
 function formatTime(timestamp: number): string {
@@ -131,6 +141,8 @@ const markdownComponents = {
 /**
  * A single chat message bubble (user = right/blue, assistant = left/slate).
  * Backwards compatible with the previous version: `role` + `message` only.
+ * Phase 8 — assistant bubbles can now show all participating agents and
+ * all tool usage across agents.
  */
 export default function ChatBubble({
   role,
@@ -139,6 +151,11 @@ export default function ChatBubble({
   isError = false,
   usedToolId,
   usedToolLabel,
+  agents,
+  agentNames,
+  agentIcons,
+  usedToolIds,
+  usedToolLabels,
 }: ChatBubbleProps) {
   const isUser = role === "user";
   const [copied, setCopied] = useState(false);
@@ -167,6 +184,23 @@ export default function ChatBubble({
     utterance.lang = "en-IN";
     window.speechSynthesis.speak(utterance);
   }
+
+  // Phase 8 — collect all participating agents (deduplicated).
+  const displayAgents = agents && agentNames && agentIcons
+    ? agents.map((agentId, index) => ({
+        id: agentId,
+        name: agentNames[index] ?? agentId,
+        icon: agentIcons[index] ?? "🤖",
+      }))
+    : [];
+
+  // Phase 8 — collect all tool labels (deduplicated).
+  const displayTools = usedToolIds && usedToolLabels
+    ? usedToolIds.map((toolId, index) => ({
+        id: toolId,
+        label: usedToolLabels[index] ?? toolId,
+      }))
+    : [];
 
   return (
     <div
@@ -216,16 +250,48 @@ export default function ChatBubble({
         </div>
 
         <div
-          className={`mt-1 flex items-center gap-2 px-1 text-[11px] text-slate-500 ${
+          className={`mt-1 flex flex-wrap items-center gap-2 px-1 text-[11px] text-slate-500 ${
             isUser ? "flex-row-reverse" : "flex-row"
           }`}
         >
-          {!isUser && usedToolId && usedToolLabel ? (
+          {/* Phase 8 — participating agents */}
+          {!isUser && displayAgents.length > 0 ? (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {displayAgents.map((agent) => (
+                <span
+                  key={agent.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300"
+                  title={`Agent: ${agent.name}`}
+                >
+                  <span aria-hidden="true">{agent.icon}</span>
+                  {agent.name}
+                </span>
+              ))}
+            </span>
+          ) : null}
+
+          {/* Phase 7 — tool usage indicator (single tool, backward compatible) */}
+          {!isUser && usedToolId && usedToolLabel && displayTools.length === 0 ? (
             <span
               className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300"
               title={`Tool used: ${usedToolId}`}
             >
               {usedToolLabel}
+            </span>
+          ) : null}
+
+          {/* Phase 8 — all tool usage across agents */}
+          {!isUser && displayTools.length > 0 ? (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {displayTools.map((tool) => (
+                <span
+                  key={tool.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-300"
+                  title={`Tool used: ${tool.id}`}
+                >
+                  {tool.label}
+                </span>
+              ))}
             </span>
           ) : null}
 

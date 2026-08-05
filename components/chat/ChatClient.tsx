@@ -428,6 +428,12 @@ export default function ChatClient({ user }: ChatClientProps) {
             routed?: boolean;
             usedToolId?: string | null;
             usedToolLabel?: string | null;
+            // Phase 8 — multi-agent fields
+            agents?: string[];
+            agentNames?: string[];
+            agentIcons?: string[];
+            usedToolIds?: string[];
+            usedToolLabels?: string[];
           };
 
           if (payload.type === "chunk" && typeof payload.text === "string") {
@@ -450,6 +456,27 @@ export default function ChatClient({ user }: ChatClientProps) {
                           ...messageItem,
                           usedToolId: payload.usedToolId ?? undefined,
                           usedToolLabel: payload.usedToolLabel ?? undefined,
+                        }
+                      : messageItem
+                  ),
+                currentId
+              );
+            }
+
+            // Phase 8 — attach all participating agents and all tool usage
+            // across agents to the assistant message.
+            if (payload.agents && payload.agents.length > 0) {
+              updateMessages(
+                (prev) =>
+                  prev.map((messageItem) =>
+                    messageItem.id === assistantId
+                      ? {
+                          ...messageItem,
+                          agents: payload.agents,
+                          agentNames: payload.agentNames,
+                          agentIcons: payload.agentIcons,
+                          usedToolIds: payload.usedToolIds,
+                          usedToolLabels: payload.usedToolLabels,
                         }
                       : messageItem
                   ),

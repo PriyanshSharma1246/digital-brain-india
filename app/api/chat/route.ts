@@ -9,18 +9,20 @@ import {
   encodeMessageEntry,
   getConversationFiles,
 } from "@/lib/chatPersistence";
-import { searchKnowledge } from "@/lib/ai/rag";
-import { buildChatPrompt, type ConversationHistoryMessage } from "@/lib/ai/promptBuilder";
+import { buildChatPrompt, buildMultiAgentChatPrompt, type ConversationHistoryMessage } from "@/lib/ai/promptBuilder";
 import type { RetrievedChunk } from "@/lib/ai/search";
-import { searchLiveWeb } from "@/lib/liveIntelligence";
-import { getAgent, getAgentCategories, type AgentId } from "@/lib/agents";
-import { routeQuery } from "@/lib/aiRouter";
+import { getAgent, type AgentId } from "@/lib/agents";
 import { buildMultimodalPrompt, parseImageAttachment } from "@/lib/multimodal";
 import { sanitizeTextInput } from "@/lib/sanitize";
 import { logError } from "@/lib/logger";
 import { addMessage, listMessages } from "@/lib/conversations";
-import { initializeTools, routeAndExecute } from "@/lib/tools";
-import type { ToolResult } from "@/lib/tools";
+import {
+  planQuery,
+  executePlan,
+  executeSingleAgent,
+  synthesize,
+} from "@/lib/planner";
+import type { AgentExecutionContext, AgentResult } from "@/lib/planner";
 
 /**
  * Extracts a human-readable error message from a thrown value.
@@ -143,53 +145,18 @@ export async function POST(req: Request) {
         ? encodeConversationMeta(conversation, conversationTitle, incomingMessage || "[Image attached]")
         : encodeMessageEntry(conversation, incomingMessage || "[Image attached]");
 
-    // Phase 6 — Agent routing. When the client does not explicitly override
-    // the agent, the router determines the best agent for this query. The
-    // routed agent then scopes RAG retrieval to its supported categories.
+    // Phase 8 — Planner. The planner analyzes the query and decides which
+    // agents should run, and whether they run in parallel or sequentially.
+    // When the client explicitly overrides the agent, the planner uses the
+    // single-agent fast path (backward compatible with Phase 6).
     const manualAgent = typeof agent === "string" && agent ? (agent as AgentId) : null;
-    const routed = manualAgent ? null : routeQuery(incomingMessage);
-    const activeAgentId: AgentId = manualAgent ?? routed?.agentId ?? "general";
-    const agentDefinition = getAgent(activeAgentId);
-    const agentCategories = getAgentCategories(activeAgentId);
+    const plan = planQuery(incomingMessage, { manualAgent });
 
-    // Phase 7 — Modular Tool Calling. Initialize the registry (idempotent) and
-    // route the message to the first tool that can handle it, scoped by the
-    // active agent. Tool failures never fail the chat: `routeAndExecute`
-    // wraps execution so a throwing tool yields a non-fatal result that the
-    // prompt builder simply skips.
-    initializeTools();
-    const toolExecution = await routeAndExecute({
-      message: incomingMessage,
-      agentId: activeAgentId,
-    });
-    const toolResult: ToolResult | null = toolExecution.result;
-    const usedToolId: string | null = toolExecution.toolId;
-
+    // Load shared context for all agents.
     const fileEntries = await getConversationFiles(session.user.id, conversation);
     const fileContext = fileEntries
       .map((entry) => `File: ${entry.fileName}\n${entry.text}`)
       .join("\n\n---\n\n");
-    const searchResult = await searchKnowledge(incomingMessage, {
-      topK: 4,
-      categories: agentCategories,
-    });
-    const retrievedChunks: RetrievedChunk[] = searchResult.chunks;
-
-    // Live web search. When the live-search tool already handled the message,
-    // skip the legacy call to avoid running the same search twice. Otherwise
-    // fall back to the existing live-context injection.
-    let liveContext = "";
-    if (usedToolId === "live-search") {
-      const liveTool = toolResult;
-      if (liveTool?.success && liveTool.output) {
-        liveContext = liveTool.output;
-      }
-    } else {
-      const liveInfo = await searchLiveWeb(incomingMessage);
-      liveContext =
-        liveInfo.shouldUseLiveInfo && liveInfo.context ? liveInfo.context : "";
-    }
-    const imagePayload = parseImageAttachment(image);
 
     // Load recent conversation history (Phase 4). If it fails, the chat
     // continues normally with an empty history (see loadRecentHistory).
@@ -199,18 +166,77 @@ export async function POST(req: Request) {
       20
     );
 
-    // Prompt assembly is delegated to the prompt builder so the route stays
-    // free of retrieval/formatting concerns. When no chunks are found the
-    // builder produces a normal chat prompt (RAG block omitted).
-    const { prompt, ragUsed } = buildChatPrompt({
-      agent: agentDefinition,
+    const imagePayload = parseImageAttachment(image);
+
+    const agentContext: AgentExecutionContext = {
       message: incomingMessage,
-      retrievedChunks,
-      liveContext,
-      fileContext,
       conversationHistory,
-      toolResult,
+      fileContext,
+      liveContext: "",
+      imagePayload,
+    };
+
+    // Phase 8 — Executor. Run all selected agents. Single-agent plans use
+    // the existing optimized flow (executeSingleAgent). Multi-agent plans
+    // run in parallel via Promise.all() inside executePlan.
+    let agentResults: AgentResult[];
+    if (plan.isSingleAgent) {
+      const singleResult = await executeSingleAgent(plan.agents[0].agentId, agentContext);
+      agentResults = [singleResult];
+    } else {
+      const execution = await executePlan(plan, agentContext);
+      agentResults = execution.agentResults;
+    }
+
+    // Phase 8 — Synthesizer. Combine all agent outputs into one final prompt.
+    // The synthesizer deduplicates RAG chunks, merges tool results, and
+    // preserves citations.
+    const synthesizerOutput = synthesize({
+      query: incomingMessage,
+      plan,
+      agentResults,
+      conversationHistory,
+      fileContext,
     });
+
+    // Build the final prompt. Multi-agent plans use the synthesizer prompt;
+    // single-agent plans use the existing optimized prompt builder for full
+    // backward compatibility.
+    let prompt: string;
+    let ragUsed: boolean;
+    let retrievedChunks: RetrievedChunk[] = [];
+    let usedToolId: string | null = null;
+    let usedToolLabel: string | null = null;
+
+    if (plan.isSingleAgent) {
+      const agentDefinition = getAgent(plan.agents[0].agentId);
+      const singleResult = agentResults[0];
+      retrievedChunks = singleResult?.retrievedChunks ?? [];
+      usedToolId = singleResult?.usedToolId ?? null;
+      usedToolLabel = singleResult?.toolResult?.metadata?.label ?? null;
+
+      const built = buildChatPrompt({
+        agent: agentDefinition,
+        message: incomingMessage,
+        retrievedChunks,
+        liveContext: singleResult?.liveContext ?? "",
+        fileContext,
+        conversationHistory,
+        toolResult: singleResult?.toolResult ?? null,
+      });
+      prompt = built.prompt;
+      ragUsed = built.ragUsed;
+    } else {
+      const built = buildMultiAgentChatPrompt(synthesizerOutput);
+      prompt = built.prompt;
+      ragUsed = built.ragUsed;
+      retrievedChunks = agentResults.flatMap((result) => result.retrievedChunks);
+      const successfulTools = agentResults
+        .filter((result) => result.toolResult?.success)
+        .map((result) => result.toolResult!);
+      usedToolId = successfulTools[0]?.toolId ?? null;
+      usedToolLabel = successfulTools[0]?.metadata?.label ?? null;
+    }
 
     const multimodalPayload = buildMultimodalPrompt(prompt, imagePayload);
     const encoder = new TextEncoder();
@@ -328,23 +354,40 @@ export async function POST(req: Request) {
             });
           }
 
+          // Phase 8 — the done event now includes all participating agents,
+          // their names/icons, and all tool usage across agents.
+          const participatingAgents = plan.agents.map((task) => task.agentId);
+          const agentNames = plan.agents.map((task) => task.agentName);
+          const agentIcons = plan.agents.map((task) => task.agentIcon);
+          const usedToolIds = agentResults
+            .filter((result) => result.usedToolId)
+            .map((result) => result.usedToolId as string);
+          const usedToolLabels = agentResults
+            .filter((result) => result.toolResult?.metadata?.label)
+            .map((result) => result.toolResult!.metadata!.label as string);
+
           controller.enqueue(
             encoder.encode(
               JSON.stringify({
                 type: "done",
                 reply: finalReply,
                 conversationId: conversation,
-                retrievedDocumentTitles: retrievedChunks.map((c) => c.documentTitle),
-                sourcePaths: retrievedChunks.map((c) => c.sourcePath ?? c.source),
+                retrievedDocumentTitles: synthesizerOutput.retrievedDocumentTitles,
+                sourcePaths: synthesizerOutput.sourcePaths,
                 ragUsed,
-                agent: activeAgentId,
-                agentName: agentDefinition.name,
-                agentIcon: agentDefinition.icon,
-                routed: Boolean(routed),
+                agent: participatingAgents[0] ?? "general",
+                agentName: agentNames[0] ?? "General Assistant",
+                agentIcon: agentIcons[0] ?? "🤖",
+                routed: !plan.isGeneralOnly,
+                agents: participatingAgents,
+                agentNames,
+                agentIcons,
                 // Phase 7 — tool usage indicator. Present only when a tool
                 // executed successfully so the UI can show e.g. "🧮 Calculator".
                 usedToolId: usedToolId,
-                usedToolLabel: toolResult?.metadata?.label ?? null,
+                usedToolLabel: usedToolLabel,
+                usedToolIds,
+                usedToolLabels,
               }) + "\n"
             )
           );
