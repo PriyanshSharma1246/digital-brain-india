@@ -57,3 +57,30 @@ export interface DataConnector {
   /** Searches the data source for the given query. */
   search(query: string): Promise<ConnectorResult>;
 }
+
+/**
+ * Phase 10 (Part 3) — Health snapshot for a connector.
+ *
+ * Produced by the health monitor (see ./health.ts) and surfaced in the admin
+ * dashboard. Additive and non-breaking: existing connectors are unaffected.
+ */
+export interface ConnectorHealth {
+  /** Connector id (stable, e.g. "weather"). */
+  id: string;
+  /** Human-readable connector name. */
+  name: string;
+  /** True when the last search used the live API (or no search yet). */
+  available: boolean;
+  /** Duration of the last search in ms (null before the first search). */
+  responseTimeMs: number | null;
+  /** Epoch ms when the last live (non-mock) search succeeded. */
+  lastSuccessAt: number | null;
+  /** Epoch ms of the last search attempt. */
+  lastAttemptAt: number | null;
+  /** Number of searches that fell back to mock (or threw). */
+  errorCount: number;
+  /** Number of searches that returned live data. */
+  successCount: number;
+  /** Mode used by the last search ("live", "mock", or null before first). */
+  lastMode: "live" | "mock" | null;
+}

@@ -256,3 +256,48 @@ model QualityCheckResult {
 
   @@index([documentId, checkType])
 }
+
+/// Phase 10 (Part 4) — persistent connector configuration.
+///
+/// Drives per-connector enable/disable and the scheduled refresh interval
+/// from the admin dashboard. Kept separate from the in-memory registry so
+/// settings survive restarts.
+model ConnectorConfig {
+  id   String @id @default(cuid())
+  /// Connector id (stable, e.g. "weather"). One config row per connector.
+  connectorId String @unique
+  /// Whether the connector is enabled for routing.
+  enabled Boolean @default(true)
+  /// How often (seconds) the background scheduler refreshes this connector.
+  refreshIntervalSeconds Int @default(3600)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([connectorId])
+}
+
+/// Phase 10 (Part 4) — persistent connector health & metrics history.
+///
+/// One row is written per connector search (best-effort) so the admin
+/// dashboard can report availability, latency, requests, failures and uptime
+/// across restarts.
+model ConnectorHealthLog {
+  id String @id @default(cuid())
+  /// Connector id (stable, e.g. "weather").
+  connectorId String
+  /// "live" | "mock" | "error".
+  mode String
+  /// Whether the request succeeded (live) or not.
+  success Boolean
+  /// Source availability after the request.
+  available Boolean
+  /// Request latency in milliseconds.
+  latencyMs Int
+  /// Error message when the request failed/errored (else null).
+  error String?
+  /// The query string that triggered the request (optional).
+  query String?
+  createdAt DateTime @default(now())
+
+  @@index([connectorId, createdAt])
+}

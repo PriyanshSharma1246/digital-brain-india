@@ -22,6 +22,8 @@ The app uses NextAuth for authentication. The following environment variables ar
 - `DATABASE_URL` — your database connection string used by Prisma.
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` — credentials for Google OAuth.
 - `DATA_GOV_API_KEY` (optional) — the Data.gov.in open-data API key used by the live Government Data connector (`lib/connectors/dataGovConnector.ts`). When unset, or when the API fails, the connector transparently falls back to its built-in mock provider so the chat never breaks. Get a key at <https://data.gov.in> (Developer → API Management).
+- `NCS_CLIENT_ID` / `NCS_CLIENT_SECRET` (optional) — credentials for the National Career Service (NCS) job-search API used by the Employment connector. When absent or on failure, the connector falls back to mock data.
+- `NCS_BASE_URL` (optional) — defaults to `https://api.ncs.gov.in`; override for an NCS-compatible proxy in tests.
 
 If `NEXTAUTH_SECRET` is not set, NextAuth will still sign JWTs but will not encrypt them; this may cause tokens to be invalidated across deployments and can lead to decryption errors if encryption was previously enabled.
 

@@ -64,8 +64,13 @@ export function routeConnectors(agentId: AgentId, query: string): string[] {
 
 /**
  * Executes every connector selected by `routeConnectors` for the given
- * agent ids and query. Connectors that are disabled, unavailable, or throw
- * are silently skipped so the chat pipeline is never broken.
+ * agent ids and query.
+ *
+ * Phase 10 (Part 3): connectors now run **in parallel** via `Promise.all`
+ * (the previous implementation iterated serially). Results are reassembled
+ * in the same order the connectors were selected so prompt output stays
+ * deterministic. Connectors that are disabled, unavailable, or throw are
+ * silently skipped so the chat pipeline is never broken.
  */
 export async function executeConnectors(
   agentIds: AgentId[],
@@ -80,20 +85,38 @@ export async function executeConnectors(
   }
 
   const enabled = new Set(getEnabledConnectors().map((c) => c.id));
-  const results: ConnectorResult[] = [];
+
+  // Launch every selected connector concurrently.
+  const orderedIds: string[] = [];
+  const jobs: Array<Promise<ConnectorResult | null>> = [];
 
   for (const id of allIds) {
     if (!enabled.has(id)) continue;
     const connector: DataConnector | undefined = getConnector(id);
     if (!connector) continue;
-    try {
-      const available = await connector.isAvailable();
-      if (!available) continue;
-      const result = await connector.search(query);
-      results.push(result);
-    } catch {
-      // Silently skip — connectors must never break the chat.
-    }
+
+    orderedIds.push(id);
+    jobs.push(
+      (async (): Promise<ConnectorResult | null> => {
+        try {
+          const available = await connector.isAvailable();
+          if (!available) return null;
+          return await connector.search(query);
+        } catch {
+          // Silently skip — connectors must never break the chat.
+          return null;
+        }
+      })()
+    );
+  }
+
+  const settled = await Promise.all(jobs);
+
+  // Reassemble results in selection order (skipping null failures).
+  const results: ConnectorResult[] = [];
+  for (let i = 0; i < orderedIds.length; i++) {
+    const result = settled[i];
+    if (result) results.push(result);
   }
 
   return results;

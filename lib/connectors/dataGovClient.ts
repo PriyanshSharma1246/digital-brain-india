@@ -1,19 +1,16 @@
 /**
- * Phase 10 (Part 2) — Data.gov.in reusable API client.
+ * Phase 10 (Part 2/4) — Data.gov.in reusable API client.
  *
- * A thin, dependency-free HTTP client for India's national open-data portal
- * (https://data.gov.in / https://api.data.gov.in). It:
- *   - reads DATA_GOV_API_KEY from the environment,
- *   - supports configurable timeout, retries and backoff,
- *   - caches successful responses for 10 minutes (via lib/cache.ts),
- *   - returns normalized results so the connector layer never has to
- *     understand the wire format.
+ * A thin client for India's national open-data portal. It reads
+ * DATA_GOV_API_KEY from the environment and delegates the actual HTTP work to
+ * the shared `./http` helper, which provides timeout, retries (exponential
+ * backoff), rate limiting, stale-while-revalidate caching and structured
+ * logging.
  *
- * Failures are graceful: network errors, timeouts, non-2xx responses and
- * malformed payloads are surfaced as a typed `DataGovApiError` so the caller
- * (the connector) can decide to fall back to mock data.
+ * All failures are surfaced as a typed `DataGovApiError` so the connector
+ * layer can decide when to fall back to mock data.
  */
-import { getCache, setCache } from "@/lib/cache";
+import { httpJson, HttpError } from "./http";
 
 /** Environment variable that holds the data.gov.in API key. */
 export const DATA_GOV_API_KEY_ENV = "DATA_GOV_API_KEY";
@@ -37,7 +34,7 @@ export interface DataGovSearchResult {
   items: DataGovItem[];
   /** True when the API reported success but returned no usable records. */
   empty: boolean;
-  /** True when the result was served from the in-memory cache. */
+  /** Reserved for future use (cached-response indicator). */
   fromCache?: boolean;
 }
 
@@ -63,13 +60,14 @@ export interface DataGovClientOptions {
   timeoutMs?: number;
   /** Number of times to retry a failed / timed-out request. */
   retries?: number;
-  /** Base delay between retries in milliseconds (scaled per attempt). */
+  /** Base delay between retries (exponential backoff). */
   retryDelayMs?: number;
-  /** How long (seconds) successful results are cached (default 600 = 10 min). */
+  /** How long (seconds) successful results are cached (default 600). */
   cacheTtlSeconds?: number;
+  /** Label used in structured logs (default "data-gov"). */
+  connectorId?: string;
 }
 
-/** Default values, kept internal so exported configs stay concise. */
 const DEFAULTS = {
   baseUrl: DATA_GOV_BASE_URL,
   timeoutMs: 8000,
@@ -120,17 +118,22 @@ function normalizeRecord(record: unknown): DataGovItem | null {
   };
 }
 
+interface CatalogPayload {
+  data?: Record<string, unknown>;
+  records?: unknown[];
+  datasets?: unknown[];
+  [key: string]: unknown;
+}
+
 /** Interprets the (possibly deeply wrapped) API JSON payload. */
 function normalizeResult(payload: unknown): DataGovSearchResult {
   if (payload === null || typeof payload !== "object") {
     return { items: [], empty: true };
   }
 
-  const root = payload as Record<string, unknown>;
+  const root = payload as CatalogPayload;
   const data =
-    root.data && typeof root.data === "object"
-      ? (root.data as Record<string, unknown>)
-      : root;
+    root.data && typeof root.data === "object" ? root.data : (root as Record<string, unknown>);
 
   const rawRecords = Array.isArray(data.records)
     ? (data.records as unknown[])
@@ -161,37 +164,6 @@ function buildSearchUrl(opts: {
   return `${opts.baseUrl}/catalog?${params.toString()}`;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Performs a single fetch with a hard timeout and parses JSON. */
-async function fetchJson(url: string, timeoutMs: number): Promise<unknown> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (!response.ok) {
-      throw new DataGovApiError(`Data.gov.in responded with HTTP ${response.status}.`);
-    }
-    const text = await response.text();
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new DataGovApiError("Data.gov.in returned a non-JSON response.");
-    }
-  } catch (error) {
-    if (error instanceof DataGovApiError) throw error;
-    throw new DataGovApiError("Data.gov.in request timed out or failed.", error);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** The client surface exposed to connectors. */
 export interface DataGovClient {
   /** The resolved API key (undefined when not configured). */
@@ -203,18 +175,13 @@ export interface DataGovClient {
 }
 
 /**
- * Creates a reusable data.gov.in client with configurable timeout, retries
- * and caching. Results are cached for 10 minutes by default.
+ * Creates a reusable data.gov.in client. Results are cached with
+ * stale-while-revalidate for 10 minutes by default.
  */
-export function createDataGovClient(
-  options: DataGovClientOptions = {}
-): DataGovClient {
+export function createDataGovClient(options: DataGovClientOptions = {}): DataGovClient {
   const apiKey = options.apiKey ?? readDataGovApiKey();
   const baseUrl = (options.baseUrl ?? DEFAULTS.baseUrl).replace(/\/+$/, "");
-  const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
-  const retries = options.retries ?? DEFAULTS.retries;
-  const retryDelayMs = options.retryDelayMs ?? DEFAULTS.retryDelayMs;
-  const cacheTtlSeconds = options.cacheTtlSeconds ?? DEFAULTS.cacheTtlSeconds;
+  const connectorId = options.connectorId ?? "data-gov";
 
   return {
     apiKey,
@@ -225,33 +192,29 @@ export function createDataGovClient(
         throw new DataGovApiError(`${DATA_GOV_API_KEY_ENV} is not configured.`);
       }
 
-      const cacheKey = `data-gov:${baseUrl}:${query.trim().toLowerCase()}`;
-      const cached = getCache<DataGovSearchResult>(cacheKey);
-      if (cached) return { ...cached, fromCache: true };
-
       const url = buildSearchUrl({ baseUrl, apiKey, query });
-      let lastError: unknown;
-
-      for (let attempt = 0; attempt <= retries; attempt++) {
-        try {
-          const payload = await fetchJson(url, timeoutMs);
-          const result = normalizeResult(payload);
-          // Only cache meaningful results so an empty transient response
-          // doesn't blanket other queries.
-          if (!result.empty) setCache(cacheKey, result, cacheTtlSeconds);
-          return result;
-        } catch (error) {
-          lastError = error;
-          if (attempt < retries) {
-            await sleep(retryDelayMs * (attempt + 1));
-          }
-        }
+      let payload: unknown;
+      try {
+        payload = await httpJson<unknown>({
+          method: "GET",
+          url,
+          connectorId,
+          timeoutMs: options.timeoutMs ?? DEFAULTS.timeoutMs,
+          retries: options.retries ?? DEFAULTS.retries,
+          retryDelayMs: options.retryDelayMs ?? DEFAULTS.retryDelayMs,
+          cacheTtlSeconds: options.cacheTtlSeconds ?? DEFAULTS.cacheTtlSeconds,
+          rateLimitKey: connectorId,
+          rateLimit: { capacity: 5, refillRate: 1, timeoutMs: 8000 },
+        });
+      } catch (error) {
+        if (error instanceof DataGovApiError) throw error;
+        throw new DataGovApiError(
+          error instanceof HttpError ? error.message : "Data.gov.in request failed.",
+          error
+        );
       }
 
-      throw new DataGovApiError(
-        "Data.gov.in request failed after all retry attempts.",
-        lastError
-      );
+      return normalizeResult(payload);
     },
   };
 }
