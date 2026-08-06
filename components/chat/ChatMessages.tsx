@@ -59,6 +59,9 @@ export default function ChatMessages({
               agentIcons={msg.agentIcons}
               usedToolIds={msg.usedToolIds}
               usedToolLabels={msg.usedToolLabels}
+              // Phase 10 — government data connector badges.
+              usedConnectorIds={msg.usedConnectorIds}
+              usedConnectorNames={msg.usedConnectorNames}
             />
           ))}
 

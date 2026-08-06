@@ -3,6 +3,9 @@ import { getAgent } from "@/lib/agents";
 import { buildKnowledgeContext } from "@/lib/ai/rag";
 import type { RetrievedChunk } from "@/lib/ai/search";
 import type { ToolResult } from "@/lib/tools";
+import type { ConnectorResult } from "@/lib/connectors/types";
+import { formatConnectorResults } from "@/lib/connectors/formatter";
+import { getConnector } from "@/lib/connectors/registry";
 import type {
   AgentResult,
   ConversationHistoryEntry,
@@ -102,6 +105,12 @@ function buildHistoryBlock(history: ConversationHistoryEntry[]): string {
   return ["Conversation history:", ...lines].join("\n");
 }
 
+/** Phase 10 — resolves a connector id to its display name (falls back to the id). */
+function getConnectorName(id: string): string {
+  const connector = getConnector(id);
+  return connector?.name ?? id;
+}
+
 /**
  * Synthesizes all agent outputs into a single final prompt.
  *
@@ -113,7 +122,7 @@ function buildHistoryBlock(history: ConversationHistoryEntry[]): string {
  *   5. The user question.
  */
 export function synthesize(input: SynthesizerInput): SynthesizerOutput {
-  const { query, plan, agentResults, conversationHistory, fileContext } = input;
+  const { query, plan, agentResults, conversationHistory, fileContext, connectorResults } = input;
 
   const successful = agentResults.filter((result) => result.success);
   const chunks = dedupeChunks(agentResults);
@@ -125,6 +134,13 @@ export function synthesize(input: SynthesizerInput): SynthesizerOutput {
   const usedToolLabels = tools
     .map((tool) => tool.metadata?.label ?? tool.toolId)
     .filter(Boolean);
+
+  // Phase 10 — government data connector results.
+  const usedConnectorIds = (connectorResults ?? []).map((r) => r.connectorId);
+  const usedConnectorNames = (connectorResults ?? []).map(
+    (r) => getConnectorName(r.connectorId)
+  );
+  const connectorSection = formatConnectorResults(connectorResults);
 
   const retrievedDocumentTitles = Array.from(
     new Set(chunks.map((chunk) => chunk.documentTitle))
@@ -147,8 +163,9 @@ export function synthesize(input: SynthesizerInput): SynthesizerOutput {
   const agentBlocks = buildAgentBlocks(successful);
   const historyBlock = buildHistoryBlock(conversationHistory);
 
-  const sections: string[] = [
+    const sections: string[] = [
     systemInstruction,
+    connectorSection,
     agentBlocks,
     historyBlock,
     fileContext ? `Uploaded files:\n${fileContext}` : "",
@@ -165,6 +182,8 @@ export function synthesize(input: SynthesizerInput): SynthesizerOutput {
     participatingAgents,
     usedToolIds,
     usedToolLabels,
+    usedConnectorIds,
+    usedConnectorNames,
   };
 }
 
@@ -177,6 +196,7 @@ export function buildSingleAgentPrompt(input: {
   fileContext: string;
   conversationHistory: ConversationHistoryEntry[];
   toolResult: ToolResult | null;
+  connectorResults?: ConnectorResult[] | null;
 }): SynthesizerOutput {
   const agent = getAgent(input.agent.id);
   const result: AgentResult = {
@@ -212,5 +232,6 @@ export function buildSingleAgentPrompt(input: {
     agentResults: [result],
     conversationHistory: input.conversationHistory,
     fileContext: input.fileContext,
+    connectorResults: input.connectorResults ?? [],
   });
 }

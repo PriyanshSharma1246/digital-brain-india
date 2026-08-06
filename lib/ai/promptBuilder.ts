@@ -2,6 +2,8 @@ import type { RetrievedChunk } from "./search";
 import { buildKnowledgeContext } from "./rag";
 import type { AgentDefinition } from "@/lib/agents";
 import type { ToolResult } from "@/lib/tools";
+import type { ConnectorResult } from "@/lib/connectors/types";
+import { formatConnectorResults } from "@/lib/connectors/formatter";
 import type { SynthesizerOutput } from "@/lib/planner";
 
 /**
@@ -57,6 +59,12 @@ export interface ChatPromptInput {
    * context so the model sees the tool result before the knowledge base.
    */
   toolResult?: ToolResult | null;
+  /**
+   * Phase 10 — Optional government data connector results.
+   * When present, the live data block is injected into the prompt between
+   * the Tool Results section and the RAG context.
+   */
+  connectorResults?: ConnectorResult[] | null;
 }
 
 /** The assembled prompt plus a flag indicating whether RAG context was used. */
@@ -166,6 +174,21 @@ function buildToolResultsBlock(toolResult: ToolResult | null | undefined): strin
 }
 
 /**
+ * Phase 10 — Builds the Live Government Data block.
+ *
+ * Successful connector output is injected into the prompt between the
+ * Tool Results section and the RAG context so the model sees live
+ * government data before the knowledge base. Failed connector
+ * executions are skipped entirely — the chat proceeds normally without
+ * the connector output (per the error-handling requirement).
+ */
+function buildConnectorResultsBlock(
+  connectorResults: ConnectorResult[] | null | undefined
+): string {
+  return formatConnectorResults(connectorResults);
+}
+
+/**
  * Builds the final prompt sent to Gemini.
  *
  * The prompt is assembled from (in order):
@@ -183,12 +206,14 @@ export function buildChatPrompt(input: ChatPromptInput): ChatPromptResult {
   const ragUsed = input.retrievedChunks.length > 0;
   const agentBlock = buildAgentBlock(input.agent);
   const toolResultsBlock = buildToolResultsBlock(input.toolResult);
+  const connectorResultsBlock = buildConnectorResultsBlock(input.connectorResults);
   const ragInstruction = buildRagInstruction(input.retrievedChunks);
   const historyBlock = buildHistoryBlock(input.conversationHistory ?? []);
 
   const sections: string[] = [
     agentBlock,
     toolResultsBlock,
+    connectorResultsBlock,
     ragInstruction,
     input.liveContext
       ? `Use the live information below when the question requires current or recent data. Include source links in the answer.\n\nLive information:\n${input.liveContext}`

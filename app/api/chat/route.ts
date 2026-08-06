@@ -23,6 +23,8 @@ import {
   synthesize,
 } from "@/lib/planner";
 import type { AgentExecutionContext, AgentResult } from "@/lib/planner";
+import { executeConnectors } from "@/lib/connectors/router";
+import type { ConnectorResult } from "@/lib/connectors/types";
 
 /**
  * Extracts a human-readable error message from a thrown value.
@@ -188,6 +190,18 @@ export async function POST(req: Request) {
       agentResults = execution.agentResults;
     }
 
+    // Phase 10 — Connector Router. Run selected government data connectors
+    // after agents execute but before RAG. Results are passed to both the
+    // single-agent prompt builder and the multi-agent synthesizer so the
+    // model sees live data before the knowledge base.
+    let connectorResults: ConnectorResult[] = [];
+    try {
+      const participatingAgentIds = plan.agents.map((task) => task.agentId);
+      connectorResults = await executeConnectors(participatingAgentIds, incomingMessage);
+    } catch {
+      // Connectors must never break the chat pipeline.
+    }
+
     // Phase 8 — Synthesizer. Combine all agent outputs into one final prompt.
     // The synthesizer deduplicates RAG chunks, merges tool results, and
     // preserves citations.
@@ -197,6 +211,7 @@ export async function POST(req: Request) {
       agentResults,
       conversationHistory,
       fileContext,
+      connectorResults,
     });
 
     // Build the final prompt. Multi-agent plans use the synthesizer prompt;
@@ -223,6 +238,7 @@ export async function POST(req: Request) {
         fileContext,
         conversationHistory,
         toolResult: singleResult?.toolResult ?? null,
+        connectorResults,
       });
       prompt = built.prompt;
       ragUsed = built.ragUsed;
@@ -366,6 +382,9 @@ export async function POST(req: Request) {
             .filter((result) => result.toolResult?.metadata?.label)
             .map((result) => result.toolResult!.metadata!.label as string);
 
+          const usedConnectorIds = synthesizerOutput.usedConnectorIds;
+          const usedConnectorNames = synthesizerOutput.usedConnectorNames;
+
           controller.enqueue(
             encoder.encode(
               JSON.stringify({
@@ -388,6 +407,9 @@ export async function POST(req: Request) {
                 usedToolLabel: usedToolLabel,
                 usedToolIds,
                 usedToolLabels,
+                // Phase 10 — connector usage indicator.
+                usedConnectorIds,
+                usedConnectorNames,
               }) + "\n"
             )
           );

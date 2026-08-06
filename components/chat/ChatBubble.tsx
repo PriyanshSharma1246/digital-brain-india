@@ -27,6 +27,10 @@ type ChatBubbleProps = {
   usedToolIds?: string[];
   /** Phase 8 — all tool labels used across agents. */
   usedToolLabels?: string[];
+  /** Phase 10 — all government data connector ids that ran. */
+  usedConnectorIds?: string[];
+  /** Phase 10 — all government data connector display names. */
+  usedConnectorNames?: string[];
 };
 
 function formatTime(timestamp: number): string {
@@ -164,6 +168,8 @@ export default function ChatBubble({
   agentIcons,
   usedToolIds,
   usedToolLabels,
+  usedConnectorIds,
+  usedConnectorNames,
 }: ChatBubbleProps) {
   const isUser = role === "user";
   const [copied, setCopied] = useState(false);
@@ -207,6 +213,14 @@ export default function ChatBubble({
     ? usedToolIds.map((toolId, index) => ({
         id: toolId,
         label: usedToolLabels[index] ?? toolId,
+      }))
+    : [];
+
+  // Phase 10 — collect all connector labels (deduplicated).
+  const displayConnectors = usedConnectorIds && usedConnectorNames
+    ? usedConnectorIds.map((connectorId, index) => ({
+        id: connectorId,
+        label: usedConnectorNames[index] ?? connectorId,
       }))
     : [];
 
@@ -298,6 +312,21 @@ export default function ChatBubble({
                   title={`Tool used: ${tool.id}`}
                 >
                   {tool.label}
+                </span>
+              ))}
+            </span>
+          ) : null}
+
+          {/* Phase 10 — government data connector badges */}
+          {!isUser && displayConnectors.length > 0 ? (
+            <span className="inline-flex flex-wrap items-center gap-1">
+              {displayConnectors.map((connector) => (
+                <span
+                  key={connector.id}
+                  className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-300"
+                  title={`Data connector: ${connector.id}`}
+                >
+                  {connector.label}
                 </span>
               ))}
             </span>

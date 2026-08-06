@@ -1,6 +1,7 @@
 import type { AgentId } from "@/lib/agents";
 import type { RetrievedChunk } from "@/lib/ai/search";
 import type { ToolResult } from "@/lib/tools";
+import type { ConnectorResult } from "@/lib/connectors/types";
 
 /**
  * Phase 8 — AI Planning & Multi-Agent Orchestration types.
@@ -134,6 +135,8 @@ export interface SynthesizerInput {
   conversationHistory: ConversationHistoryEntry[];
   /** Uploaded file context. */
   fileContext: string;
+  /** Phase 10 — live government data connector results (before RAG). */
+  connectorResults?: ConnectorResult[];
 }
 
 /** Output of the synthesizer. */
@@ -152,6 +155,10 @@ export interface SynthesizerOutput {
   usedToolIds: string[];
   /** All tool labels used across agents. */
   usedToolLabels: string[];
+  /** Phase 10 — ids of government data connectors that ran. */
+  usedConnectorIds: string[];
+  /** Phase 10 — display names of government data connectors that ran. */
+  usedConnectorNames: string[];
 }
 
 /** Stream event types emitted by the chat route. */
@@ -161,5 +168,5 @@ export type PlannerStreamEvent =
   | { type: "agent-done"; agentId: AgentId; agentName: string; agentIcon: string; success: boolean }
   | { type: "synthesizing" }
   | { type: "chunk"; text: string }
-  | { type: "done"; reply: string; conversationId: string; retrievedDocumentTitles: string[]; sourcePaths: string[]; ragUsed: boolean; agents: AgentId[]; agentNames: string[]; agentIcons: string[]; usedToolIds: string[]; usedToolLabels: string[] }
+  | { type: "done"; reply: string; conversationId: string; retrievedDocumentTitles: string[]; sourcePaths: string[]; ragUsed: boolean; agents: AgentId[]; agentNames: string[]; agentIcons: string[]; usedToolIds: string[]; usedToolLabels: string[]; usedConnectorIds: string[]; usedConnectorNames: string[] }
   | { type: "error"; error: string };

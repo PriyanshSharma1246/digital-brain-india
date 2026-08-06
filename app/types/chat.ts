@@ -28,6 +28,10 @@ export type ChatMessage = {
   usedToolIds?: string[];
   /** Phase 8 — all tool labels used across agents. */
   usedToolLabels?: string[];
+  /** Phase 10 — all government data connector ids that ran. */
+  usedConnectorIds?: string[];
+  /** Phase 10 — all government data connector display names. */
+  usedConnectorNames?: string[];
 };
 
 export type Conversation = {

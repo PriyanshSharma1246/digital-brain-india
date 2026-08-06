@@ -435,6 +435,9 @@ export default function ChatClient({ user }: ChatClientProps) {
             agentIcons?: string[];
             usedToolIds?: string[];
             usedToolLabels?: string[];
+            // Phase 10 — connector fields
+            usedConnectorIds?: string[];
+            usedConnectorNames?: string[];
           };
 
           if (payload.type === "chunk" && typeof payload.text === "string") {
@@ -478,6 +481,27 @@ export default function ChatClient({ user }: ChatClientProps) {
                           agentIcons: payload.agentIcons,
                           usedToolIds: payload.usedToolIds,
                           usedToolLabels: payload.usedToolLabels,
+                          // Phase 10 — attach connector metadata.
+                          usedConnectorIds: payload.usedConnectorIds,
+                          usedConnectorNames: payload.usedConnectorNames,
+                        }
+                      : messageItem
+                  ),
+                currentId
+              );
+            }
+
+            // Phase 10 — attach connector metadata even when there are no
+            // participating agents (e.g. single-agent general queries).
+            if (payload.usedConnectorIds && payload.usedConnectorIds.length > 0) {
+              updateMessages(
+                (prev) =>
+                  prev.map((messageItem) =>
+                    messageItem.id === assistantId
+                      ? {
+                          ...messageItem,
+                          usedConnectorIds: payload.usedConnectorIds,
+                          usedConnectorNames: payload.usedConnectorNames,
                         }
                       : messageItem
                   ),

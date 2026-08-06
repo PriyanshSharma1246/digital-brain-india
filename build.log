@@ -1,0 +1,57 @@
+
+> digital-brain-india@0.1.0 build
+> next build
+
+▲ Next.js 16.2.11 (Turbopack)
+- Environments: .env.local, .env
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 28.0s
+  Running TypeScript ...
+  Finished TypeScript in 19.6s ...
+  Collecting page data using 3 workers ...
+  Generating static pages using 3 workers (0/27) ...
+  Generating static pages using 3 workers (6/27) 
+  Generating static pages using 3 workers (13/27) 
+  Generating static pages using 3 workers (20/27) 
+✓ Generating static pages using 3 workers (27/27) in 1110ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /admin/knowledge
+├ ○ /agriculture
+├ ƒ /api/admin/knowledge
+├ ƒ /api/admin/knowledge/[id]
+├ ƒ /api/admin/knowledge/[id]/reindex
+├ ƒ /api/admin/knowledge/jobs
+├ ƒ /api/admin/knowledge/upload
+├ ƒ /api/auth/[...nextauth]
+├ ƒ /api/auth/register
+├ ƒ /api/chat
+├ ƒ /api/chat/conversation/delete
+├ ƒ /api/chat/conversation/rename
+├ ƒ /api/chat/history
+├ ƒ /api/chat/upload
+├ ƒ /api/conversations
+├ ƒ /api/conversations/[id]
+├ ƒ /api/conversations/[id]/messages
+├ ƒ /api/knowledge
+├ ƒ /api/live
+├ ƒ /chat
+├ ○ /dashboard
+├ ○ /education
+├ ○ /education/ai-tutor
+├ ○ /finance
+├ ○ /government
+├ ○ /healthcare
+├ ƒ /knowledge
+├ ○ /login
+├ ƒ /profile
+└ ○ /register
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+
