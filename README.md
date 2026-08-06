@@ -2,6 +2,10 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
+## Production deployment
+
+Set `DATABASE_URL`, `NEXTAUTH_SECRET`, and `NEXTAUTH_URL` in the deployment environment. Add `GEMINI_API_KEY` for AI and embeddings, plus the optional connector credentials documented below. Run `npx prisma migrate deploy`, then `npm run build` and `npm run start`. Probe `GET /api/health` after deployment; it returns `503` when required production configuration is missing.
+
 First, run the development server:
 
 ```bash

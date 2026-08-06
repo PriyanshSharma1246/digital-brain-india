@@ -9,9 +9,11 @@
 import "@/lib/connectors";
 import { applyConnectorConfigs } from "@/lib/connectors/config";
 import { startConnectorScheduler } from "@/lib/connectors/scheduler";
+import { reportEnvironmentValidation } from "@/lib/environment";
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    reportEnvironmentValidation();
     await applyConnectorConfigs();
     startConnectorScheduler();
   }
