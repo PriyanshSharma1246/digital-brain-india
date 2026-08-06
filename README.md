@@ -21,6 +21,7 @@ The app uses NextAuth for authentication. The following environment variables ar
 - `NEXTAUTH_URL` — the canonical URL of your app (e.g. `http://localhost:3000`).
 - `DATABASE_URL` — your database connection string used by Prisma.
 - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` — credentials for Google OAuth.
+- `DATA_GOV_API_KEY` (optional) — the Data.gov.in open-data API key used by the live Government Data connector (`lib/connectors/dataGovConnector.ts`). When unset, or when the API fails, the connector transparently falls back to its built-in mock provider so the chat never breaks. Get a key at <https://data.gov.in> (Developer → API Management).
 
 If `NEXTAUTH_SECRET` is not set, NextAuth will still sign JWTs but will not encrypt them; this may cause tokens to be invalidated across deployments and can lead to decryption errors if encryption was previously enabled.
 
