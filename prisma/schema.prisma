@@ -301,3 +301,79 @@ model ConnectorHealthLog {
 
   @@index([connectorId, createdAt])
 }
+
+/// Phase 11 - AI Workflow Engine models
+///
+/// These models power the visual workflow builder and runtime engine.
+/// A Workflow owns ordered Node / Edge records that describe a directed
+/// acyclic graph (DAG). Runs persist execution state, input/output JSON,
+/// token usage and per-node execution logs for the admin dashboard.
+model Workflow {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String
+  status      String          @default("draft")
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  nodes WorkflowNode[]
+  edges WorkflowEdge[]
+  runs  WorkflowRun[]
+
+  @@index([ownerId])
+}
+
+model WorkflowNode {
+  id            String   @id @default(cuid())
+  workflowId    String
+  workflow      Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  name          String?
+  type          String
+  positionX     Int      @default(0)
+  positionY     Int      @default(0)
+  configuration Json?
+
+  @@index([workflowId])
+}
+
+model WorkflowEdge {
+  id          String   @id @default(cuid())
+  workflowId  String
+  workflow    Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  sourceNode  String
+  targetNode  String
+  condition   String?
+
+  @@index([workflowId])
+}
+
+model WorkflowRun {
+  id            String             @id @default(cuid())
+  workflowId    String
+  workflow      Workflow           @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  status        String             @default("running")
+  startedAt     DateTime           @default(now())
+  finishedAt    DateTime?
+  input         Json?
+  output        Json?
+  tokensUsed    Int                @default(0)
+  executionTime Int?
+  error         String?
+
+  logs WorkflowExecutionLog[]
+
+  @@index([workflowId, status])
+}
+
+model WorkflowExecutionLog {
+  id        String      @id @default(cuid())
+  runId     String
+  run       WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  timestamp DateTime    @default(now())
+  level     String
+  message   String
+  metadata  Json?
+
+  @@index([runId, timestamp])
+}

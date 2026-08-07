@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated test coverage output must not be linted (it is gitignored).
+    "coverage/**",
   ]),
 ]);
 

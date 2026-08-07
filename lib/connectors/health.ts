@@ -115,8 +115,8 @@ function recordError(
 }
 
 /** Registers an initial health snapshot for a connector (idempotent). */
-export function seedConnectorHealth(id: string, name: string): void {
-  seed(id, name);
+export function seedConnectorHealth(id: string, name: string): ConnectorHealth {
+  return seed(id, name);
 }
 
 /** Returns the health snapshot for one connector. */
